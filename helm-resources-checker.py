@@ -142,9 +142,9 @@ def main():
         config.load_kube_config()
 
     parser = argparse.ArgumentParser(description="List Helm release resources and highlight live status.")
-    parser.add_argument("--name", required=True)
-    parser.add_argument("--namespace", required=True)
-    parser.add_argument("--revision", type=int, help="Specific Helm release revision to inspect")
+    parser.add_argument("--name", "-n", required=True)
+    parser.add_argument("--namespace", "-ns", required=True)
+    parser.add_argument("--revision", "-r", type=int, help="Specific Helm release revision to inspect")
     args = parser.parse_args()
 
     dyn = dynamic.DynamicClient(api_client.ApiClient())
@@ -174,7 +174,7 @@ def main():
         colour = GREEN if live else RED
         status_txt = "✓ exists" if live else "✗ absent"
         exists_any = exists_any or live
-        ns_prefix = "" # f"{ns}/" if ns else
+        ns_prefix  = f"{ns}/" if ns else ""
         print(f"{kind:<25} {ns_prefix}{name}  -> {colour}{status_txt}{RESET}")
 
     if not exists_any:
