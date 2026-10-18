@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"regexp"
@@ -115,6 +118,8 @@ var workloadGVR = map[string]schema.GroupVersionResource{
 
 func newHealthCommand(o *Options) *cobra.Command {
 	var revision, logLines int
+	var wait bool
+	var timeout, interval time.Duration
 	cmd := &cobra.Command{
 		Use:   "health RELEASE",
 		Short: "Check readiness of the Deployments and StatefulSets of a release",
@@ -123,17 +128,30 @@ revision, list their pods that crash or cannot pull an image, and show the warni
 the last hour for these workloads and pods. With --logs N it also shows the last N log lines of
 the pods that crash, fail to start or are not ready. Nothing is changed.
 
+With --wait it polls until the release is healthy, printing the state again whenever it changes
+(including the log lines when --logs is set), and exits with code 2 if --timeout passes first.
+With -o json or -o yaml only the final state is printed.
+
 Exits with code 2 when a workload is not fully rolled out or absent, or a pod is crashing.`,
 		Example: `  helm-debug health backend -n prod
   helm-debug health backend -o json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if logLines < 0 {
+				return fmt.Errorf("--logs must not be negative")
+			}
+			if wait && timeout <= 0 {
+				return fmt.Errorf("--timeout must be positive")
+			}
+			if wait && interval <= 0 {
+				return fmt.Errorf("--interval must be positive")
+			}
 			c, err := o.NewClients(o)
 			if err != nil {
 				return err
 			}
-			if logLines < 0 {
-				return fmt.Errorf("--logs must not be negative")
+			if wait {
+				return waitHealth(cmd, o, c, args[0], revision, logLines, timeout, interval)
 			}
 			res, err := runHealth(cmd, o, c, args[0], revision, logLines)
 			if err != nil {
@@ -149,8 +167,69 @@ Exits with code 2 when a workload is not fully rolled out or absent, or a pod is
 		},
 	}
 	cmd.Flags().IntVarP(&revision, "revision", "r", 0, "Release revision to inspect (default: latest)")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Poll until the release is healthy, printing every change of state")
+	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "With --wait: give up after this long and exit with code 2")
+	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "With --wait: time between polls")
 	cmd.Flags().IntVar(&logLines, "logs", 0, "Show the last N log lines of problem and not-ready pods (0 = off)")
 	return cmd
+}
+
+// waitHealth polls the release until it is healthy or the timeout passes. In table mode it prints the
+// state at the first poll and again whenever it changes; in json or yaml mode only the final state.
+func waitHealth(cmd *cobra.Command, o *Options, c *Clients, name string, revision, logLines int, timeout, interval time.Duration) error {
+	start := o.Now()
+	deadline := start.Add(timeout)
+	table := o.Output == "" || o.Output == "table"
+	var last []byte
+	for {
+		res, err := runHealth(cmd, o, c, name, revision, logLines)
+		if err != nil {
+			return err
+		}
+		ok := !res.problems()
+		now := o.Now()
+		if table {
+			if sig, _ := json.Marshal(res); !bytes.Equal(sig, last) {
+				if last != nil {
+					fmt.Fprintln(o.Out)
+				}
+				state := o.paint(unhealthy, statusColor(unhealthy))
+				if ok {
+					state = o.paint(healthy, statusColor(healthy))
+				}
+				fmt.Fprintf(o.Out, "[%s +%s] %s\n", now.Format("15:04:05"), formatAge(now.Sub(start)), state)
+				printHealth(o, o.Out, res)
+				last = sig
+			}
+		}
+		if ok || !now.Before(deadline) {
+			if table && !ok {
+				fmt.Fprintf(o.Out, "\n[%s +%s] timed out after %s, the release is still unhealthy\n", now.Format("15:04:05"), formatAge(now.Sub(start)), timeout)
+			} else if !table {
+				if err := o.print(res, nil); err != nil {
+					return err
+				}
+			}
+			if ok {
+				return nil
+			}
+			return ErrProblems
+		}
+		if err := o.Sleep(cmd.Context(), min(interval, deadline.Sub(now))); err != nil {
+			return err
+		}
+	}
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 func runHealth(cmd *cobra.Command, o *Options, c *Clients, name string, revision, logLines int) (*healthResult, error) {

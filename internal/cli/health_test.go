@@ -23,7 +23,11 @@ func (c *cluster) yaml(doc string) {
 
 func (c *cluster) deployment(name string, generation, observed, desired, updated, ready, available int) {
 	c.t.Helper()
-	c.yaml(fmt.Sprintf(`apiVersion: apps/v1
+	c.yaml(deploymentDoc(name, generation, observed, desired, updated, ready, available))
+}
+
+func deploymentDoc(name string, generation, observed, desired, updated, ready, available int) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata: {name: %[1]s, namespace: prod, generation: %[2]d}
 spec:
@@ -35,7 +39,7 @@ status:
   updatedReplicas: %[5]d
   readyReplicas: %[6]d
   availableReplicas: %[7]d
-`, name, generation, observed, desired, updated, ready, available))
+`, name, generation, observed, desired, updated, ready, available)
 }
 
 func (c *cluster) statefulSet(name string, desired, updated, ready int) {

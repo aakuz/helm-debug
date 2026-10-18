@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -49,6 +50,8 @@ type Options struct {
 
 	Out, ErrOut io.Writer
 	Now         func() time.Time
+	// Sleep pauses between polls of --wait; tests replace it to advance a fake clock.
+	Sleep func(ctx context.Context, d time.Duration) error
 	// NewClients builds cluster clients; tests replace it with fakes.
 	NewClients func(o *Options) (*Clients, error)
 	// Color forces colored output on or off; nil means auto-detect.
@@ -64,6 +67,7 @@ func NewOptions() *Options {
 		Out:         os.Stdout,
 		ErrOut:      os.Stderr,
 		Now:         time.Now,
+		Sleep:       sleepContext,
 		NewClients:  realClients,
 	}
 	applyHelmEnv(o.Flags)
