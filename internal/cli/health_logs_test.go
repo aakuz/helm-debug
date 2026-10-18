@@ -327,7 +327,7 @@ func TestCleanLine(t *testing.T) {
 		{"plain", "quota exceeded", "quota exceeded"},
 		{"newlines and tabs become single spaces", "line one\nline two\t\tend\r\n", "line one line two end"},
 		{"escape sequences removed", "\x1b[31mfailed\x1b[0m: \x1b]0;title\x07reason", "failed: reason"},
-		{"bidi override removed", "a‮b", "ab"},
+		{"bidi override removed", "a\u202eb", "ab"},
 		{"empty", "", ""},
 	}
 	for _, tt := range tests {

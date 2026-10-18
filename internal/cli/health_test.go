@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"helm.sh/helm/v4/pkg/release/common"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
 )
@@ -242,6 +245,72 @@ func TestStatefulSetState(t *testing.T) {
 			_, _, msg := statefulSetState(&s)
 			if tt.want == "" && msg != "" || !strings.Contains(msg, tt.want) {
 				t.Fatalf("message = %q, want %q", msg, tt.want)
+			}
+		})
+	}
+}
+
+func TestEventTime(t *testing.T) {
+	at := func(h int) metav1.Time { return metav1.NewTime(time.Date(2026, 10, 18, h, 0, 0, 0, time.UTC)) }
+	micro := func(h int) metav1.MicroTime {
+		return metav1.NewMicroTime(time.Date(2026, 10, 18, h, 0, 0, 0, time.UTC))
+	}
+	tests := []struct {
+		name string
+		ev   corev1.Event
+		want int
+	}{
+		{"last timestamp wins", corev1.Event{
+			ObjectMeta: metav1.ObjectMeta{CreationTimestamp: at(1)}, EventTime: micro(2),
+			Series: &corev1.EventSeries{LastObservedTime: micro(3)}, LastTimestamp: at(4)}, 4},
+		{"series before event time", corev1.Event{
+			ObjectMeta: metav1.ObjectMeta{CreationTimestamp: at(1)}, EventTime: micro(2),
+			Series: &corev1.EventSeries{LastObservedTime: micro(3)}}, 3},
+		{"event time before creation", corev1.Event{
+			ObjectMeta: metav1.ObjectMeta{CreationTimestamp: at(1)}, EventTime: micro(2)}, 2},
+		{"creation time as the last resort", corev1.Event{ObjectMeta: metav1.ObjectMeta{CreationTimestamp: at(1)}}, 1},
+		{"empty series is skipped", corev1.Event{
+			ObjectMeta: metav1.ObjectMeta{CreationTimestamp: at(1)}, Series: &corev1.EventSeries{}}, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			want := time.Date(2026, 10, 18, tt.want, 0, 0, 0, time.UTC)
+			if got := eventTime(tt.ev); !got.Equal(want) {
+				t.Fatalf("eventTime = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestPodProblem(t *testing.T) {
+	waiting := func(reason string) corev1.ContainerStatus {
+		return corev1.ContainerStatus{Name: "c", RestartCount: 1, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: reason}}}
+	}
+	tests := []struct {
+		name                 string
+		pod                  corev1.Pod
+		wantReason, wantCont string
+		wantRestarts         int32
+		wantNone             bool
+	}{
+		{name: "failed pod with a reason", pod: corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodFailed, Reason: "Evicted"}}, wantReason: "Evicted"},
+		{name: "failed pod without a reason", pod: corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodFailed}}, wantReason: "Failed"},
+		{name: "bad waiting reason names the container", pod: corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{waiting("CrashLoopBackOff")}}}, wantReason: "CrashLoopBackOff", wantCont: "c", wantRestarts: 1},
+		{name: "init container counts too", pod: corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodPending, InitContainerStatuses: []corev1.ContainerStatus{waiting("ErrImagePull")}}}, wantReason: "ErrImagePull", wantCont: "c", wantRestarts: 1},
+		{name: "harmless waiting reason", pod: corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{waiting("ContainerCreating")}}}, wantNone: true},
+		{name: "running pod", pod: corev1.Pod{Status: corev1.PodStatus{Phase: corev1.PodRunning}}, wantNone: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := podProblem(tt.pod)
+			if tt.wantNone {
+				if got != nil {
+					t.Fatalf("want no problem, got %+v", got)
+				}
+				return
+			}
+			if got == nil || got.Reason != tt.wantReason || got.Container != tt.wantCont || got.Restarts != tt.wantRestarts {
+				t.Fatalf("podProblem = %+v, want reason %q container %q restarts %d", got, tt.wantReason, tt.wantCont, tt.wantRestarts)
 			}
 		})
 	}
