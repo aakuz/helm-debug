@@ -164,6 +164,23 @@ func TestHealthLogsPodWithoutReadyConditionCountsAsNotReady(t *testing.T) {
 	}
 }
 
+func TestHealthLogsUnknownReadyConditionCountsAsNotReady(t *testing.T) {
+	c := healthCluster(t)
+	c.deployment("web", 1, 1, 2, 2, 1, 1)
+	c.statefulSet("db", 1, 1, 1)
+	c.podWithStatus("web-aaa", "web", `  phase: Running
+  conditions: [{type: Ready, status: "Unknown"}]
+  containerStatuses:
+  - {name: main, ready: false, restartCount: 0, state: {running: {startedAt: "2026-10-18T11:00:00Z"}}}
+`)
+	c.setLog("web-aaa/main", "node lost contact\n")
+	_, err := run(t, c, "prod", "health", "web", "--logs", "1")
+	wantProblems(t, err, true)
+	if len(c.logCalls) != 1 {
+		t.Fatalf("want one log request, got %v", c.logCalls)
+	}
+}
+
 func TestHealthLogsSkipsContainersThatNeverStarted(t *testing.T) {
 	c := healthCluster(t)
 	c.deployment("web", 1, 1, 2, 2, 1, 1)
