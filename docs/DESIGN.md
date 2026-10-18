@@ -120,6 +120,18 @@ are only visible through the replica counts and events. Warning events of the la
 window) are matched by involved object: the workload, its pods, and ReplicaSets named
 `<deployment>-<hash>`. Events never change the exit code; a lookup error for a workload does.
 
+`--wait` runs the same snapshot as a single call on every poll and compares its JSON with the previous
+one, printing only when it differs. The deadline is the start time plus `--timeout`, read from the
+injectable clock (`Options.Now`), and pauses go through `Options.Sleep`; the last pause is cut to the
+time left, so the final poll lands on the deadline. Only table output streams; json and yaml print the
+final snapshot. Log targets are picked per pod: a problem pod contributes its failing container (the one
+waiting with the problem reason, else the first), read from the previous run when that container has
+restarted and is not running; a not-ready pod of an unhealthy workload contributes its first not-ready
+container. Containers that never started are skipped. Logs are read through the `pods/log` subresource
+(a GET, capped at 64 KiB per container), so the tool stays read-only (ADR-0003). Lines are untrusted
+output: escape sequences and control characters other than tab are removed, invalid UTF-8 is replaced,
+and lines are cut at 500 characters.
+
 ## Invocation modes
 
 One `main`, built twice by goreleaser as `helm-debug` and `kubectl-helm_debug`, plus a Helm plugin

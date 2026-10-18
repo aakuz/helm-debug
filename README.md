@@ -281,6 +281,53 @@ fully rolled out, absent or could not be read (status `error`), or a pod with pr
 warning events alone do not cause 2. Errors that stop the command (for example, no such release or
 no access to the release records) exit 1.
 
+`--logs N` (default `0`, off) adds the last N log lines of the containers that explain a problem.
+Logs are read through the `pods/log` subresource, a read-only GET capped at 64 KiB per container.
+They are shown for the pods listed under "Pods with problems" (for a crash-looping container, the log
+of its previous run) and for the pods that are not Ready in unhealthy workloads. Containers that never
+started (`ImagePullBackOff`, `ErrImagePull`, `InvalidImageName`, `CreateContainerConfigError`) have no
+log and are skipped. Each log is printed under `Logs of POD (container NAME[, previous run]):`, indented
+by two spaces. A failed log request prints `warning: unavailable: <error>` and does not change the exit
+code. Log lines are untrusted container output: terminal escape sequences and control characters (except
+tab) are removed, invalid UTF-8 is replaced, and lines longer than 500 characters are cut with an
+ellipsis. In `-o json` and `-o yaml` the logs are a `logs` array per workload (`pod`, `container`,
+`previous`, `lines`, `error`), and problem pods gain a `container` field. A negative N is an error.
+
+`--wait` polls until the release is healthy, using the same condition as exit code 0 without it.
+`--interval` (default `2s`) is the time between polls and `--timeout` (default `5m`) the total wait;
+both must be positive and only matter with `--wait`. In table mode the state is printed on the first
+poll and again whenever it changes (workload status and counts, problem pods, warning events, and log
+lines when `--logs` is set). Each print starts with a `[HH:MM:SS +ELAPSED] healthy|unhealthy` line, and
+polls without a change print nothing. On success the command exits 0. When the timeout passes first it
+prints `timed out after DURATION, the release is still unhealthy` and exits 2. Ctrl-C and errors (unknown
+release, API errors) exit 1. With `-o json` or `-o yaml` nothing is streamed; only the final snapshot is
+printed.
+
+```console
+$ helm-debug health backend -n prod --wait --logs 5
+[12:00:00 +0s] unhealthy
+Release prod/backend revision 2 (deployed)
+
+KIND        NAMESPACE  NAME     READY  STATUS     DETAILS
+Deployment  prod       backend  1/3    unhealthy  1 of 3 available
+
+Pods with problems:
+POD          PHASE    REASON            RESTARTS
+backend-aaa  Running  CrashLoopBackOff  7
+
+Logs of backend-aaa (container main, previous run):
+  starting
+  panic: no database
+
+...
+
+[12:00:04 +4s] healthy
+Release prod/backend revision 2 (deployed)
+
+KIND        NAMESPACE  NAME     READY  STATUS   DETAILS
+Deployment  prod       backend  3/3    healthy  -
+```
+
 ## Output and colors
 
 `table` output is meant for people; `-o json` and `-o yaml` carry the same data for scripts, with
@@ -323,7 +370,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 | `history` | `list` on secrets (or configmaps) in the release namespace |
 | `find` | `get` on the object; `list` + `get` on secrets (or configmaps) cluster-wide for the scan |
 | `stuck` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
-| `health` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the Deployments and StatefulSets, `list` on pods and events in their namespaces |
+| `health` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the Deployments and StatefulSets, `list` on pods and events in their namespaces, `get` on `pods/log` with `--logs` |
 
 ## Development
 
