@@ -276,32 +276,42 @@ last hour are shown for the workloads, their ReplicaSets and their pods.
 including the events. The command is read-only: it only GETs the workloads, LISTs pods and events
 in their namespaces, and reads the release records like the other commands.
 
-Exit code is 0 when every workload is rolled out and no pod is listed. It is 2 when a workload is not
-fully rolled out, absent or could not be read (status `error`), or a pod with problems is listed;
-warning events alone do not cause 2. Errors that stop the command (for example, no such release or
-no access to the release records) exit 1.
+Exit code is 0 when the release status is not a problem status, every workload is rolled out and no pod
+is listed. It is 2 when the release status is `pending-install`, `pending-upgrade`, `pending-rollback`,
+`uninstalling` or `failed` (its workloads may not reflect the latest revision yet, so the table prints
+a `warning: release is <status>` line), when a workload is not fully rolled out, absent or could not be
+read (status `error`), or when a pod with problems is listed. Warning events alone do not cause 2. Errors
+that stop the command (for example, no such release or no access to the release records) exit 1.
 
-`--logs N` (default `0`, off) adds the last N log lines of the containers that explain a problem.
-Logs are read through the `pods/log` subresource, a read-only GET capped at 64 KiB per container.
-They are shown for the pods listed under "Pods with problems" (for a crash-looping container, the log
-of its previous run) and for the pods that are not Ready in unhealthy workloads. Containers that never
+`--logs N` (default `0`, off) adds the last N log lines of the containers that explain a problem; N must
+be between 0 and 1000, otherwise the command fails. Logs are read through the `pods/log` subresource, a
+read-only GET capped at 1 MiB per container, one pod at a time per workload. They are shown for the pods
+listed under "Pods with problems" and for the pods that are not Ready in unhealthy workloads. A container
+that has restarted and is currently waiting (for example `CrashLoopBackOff`) shows the log of its previous
+run; a container that is running or has just exited shows its current log. Containers that never
 started (`ImagePullBackOff`, `ErrImagePull`, `InvalidImageName`, `CreateContainerConfigError`) have no
 log and are skipped. Each log is printed under `Logs of POD (container NAME[, previous run]):`, indented
 by two spaces. A failed log request prints `warning: unavailable: <error>` and does not change the exit
-code. Log lines are untrusted container output: terminal escape sequences and control characters (except
-tab) are removed, invalid UTF-8 is replaced, and lines longer than 500 characters are cut with an
-ellipsis. In `-o json` and `-o yaml` the logs are a `logs` array per workload (`pod`, `container`,
-`previous`, `lines`, `error`), and problem pods gain a `container` field. A negative N is an error.
+code. Log lines are untrusted container output: terminal escape sequences (CSI, OSC, DCS, SOS, PM and APC
+strings) and control characters (except tab) are removed, Unicode format characters (bidi overrides,
+zero-width characters) are removed, invalid UTF-8 is replaced, and lines longer than 500 characters are
+cut with an ellipsis. The same cleaning applies to log read error texts and to warning event reasons and
+messages. In `-o json` and `-o yaml` the logs are a `logs` array per workload (`pod`, `container`,
+`previous`, `lines`, `error`), and problem pods gain a `container` field.
 
-`--wait` polls until the release is healthy, using the same condition as exit code 0 without it.
-`--interval` (default `2s`) is the time between polls and `--timeout` (default `5m`) the total wait;
-both must be positive and only matter with `--wait`. In table mode the state is printed on the first
-poll and again whenever it changes (workload status and counts, problem pods, warning events, and log
-lines when `--logs` is set). Each print starts with a `[HH:MM:SS +ELAPSED] healthy|unhealthy` line, and
-polls without a change print nothing. On success the command exits 0. When the timeout passes first it
-prints `timed out after DURATION, the release is still unhealthy` and exits 2. Ctrl-C and errors (unknown
-release, API errors) exit 1. With `-o json` or `-o yaml` nothing is streamed; only the final snapshot is
-printed.
+`--wait` polls until the release is healthy: the release status is not a problem status, every workload is
+rolled out and no pod is listed, which is the condition under which exit code 0 is returned without it.
+`--interval` (default `2s`) is the time between polls and `--timeout` (default `5m`) the total wait; both
+must be positive, and passing either without `--wait` is an error (`--timeout requires --wait`). In table
+mode the state is printed on the first poll and again whenever it changes: a status or count change, a
+restart count change, a new or changed problem pod, a new kind of warning event, or a changed log line when
+`--logs` is set. A repeat of a known warning event (higher count or newer time, same object, reason and
+message) does not print a new snapshot. Each print starts with a `[HH:MM:SS +ELAPSED] healthy|unhealthy`
+line, and polls without a change print nothing. On success the command exits 0. When the timeout passes
+first it prints `timed out after DURATION, the release is still unhealthy` and exits 2. Ctrl-C stops the
+command like any other tool (the shell reports 130). Errors reading the release record (unknown release,
+storage errors) abort the wait with exit 1; per-workload lookup errors are retried until the timeout. With
+`-o json` or `-o yaml` nothing is streamed; only the final snapshot is printed.
 
 ```console
 $ helm-debug health backend -n prod --wait --logs 5

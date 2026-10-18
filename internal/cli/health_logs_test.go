@@ -321,3 +321,20 @@ func TestHealthEventMessageIsSanitized(t *testing.T) {
 		t.Fatalf("event message must be sanitized:\n%q", out)
 	}
 }
+
+func TestCleanLine(t *testing.T) {
+	tests := []struct{ name, in, want string }{
+		{"plain", "quota exceeded", "quota exceeded"},
+		{"newlines and tabs become single spaces", "line one\nline two\t\tend\r\n", "line one line two end"},
+		{"escape sequences removed", "\x1b[31mfailed\x1b[0m: \x1b]0;title\x07reason", "failed: reason"},
+		{"bidi override removed", "a‮b", "ab"},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cleanLine(tt.in); got != tt.want {
+				t.Fatalf("cleanLine(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

@@ -144,7 +144,8 @@ With --wait it polls until the release is healthy, printing the state again when
 (including the log lines when --logs is set), and exits with code 2 if --timeout passes first.
 With -o json or -o yaml only the final state is printed.
 
-Exits with code 2 when a workload is not fully rolled out or absent, or a pod is crashing.`,
+Exits with code 2 when a workload is not fully rolled out or absent, a pod is crashing, or the
+release itself is pending, uninstalling or failed.`,
 		Example: `  helm-debug health backend -n prod
   helm-debug health backend -o json`,
 		Args: cobra.ExactArgs(1),

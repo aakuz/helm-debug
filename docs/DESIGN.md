@@ -113,6 +113,11 @@ ignored); they are fetched through fixed resources, so no REST mapping is needed
 - StatefulSet: incomplete when `observedGeneration` is behind or ready replicas are below the desired
   count; updated replicas are compared against `replicas - partition`, and not at all for `OnDelete`.
 
+The release status is part of the decision too: `pending-install`, `pending-upgrade`, `pending-rollback`,
+`uninstalling` and `failed` are problems in both modes, even when the workloads look healthy, because an
+operation may still be in progress or have failed, and an old Deployment can look healthy during an
+upgrade. The table prints a `warning: release is <status>` line for them.
+
 Pods come from the workload's label selector, so workloads with overlapping selectors report each
 other's pods and old-ReplicaSet pods are included during a rollout. A pod is reported only when it
 failed or a container waits with a known bad reason; unschedulable `Pending` pods and `minReadySeconds`
@@ -120,17 +125,25 @@ are only visible through the replica counts and events. Warning events of the la
 window) are matched by involved object: the workload, its pods, and ReplicaSets named
 `<deployment>-<hash>`. Events never change the exit code; a lookup error for a workload does.
 
-`--wait` runs the same snapshot as a single call on every poll and compares its JSON with the previous
-one, printing only when it differs. The deadline is the start time plus `--timeout`, read from the
-injectable clock (`Options.Now`), and pauses go through `Options.Sleep`; the last pause is cut to the
-time left, so the final poll lands on the deadline. Only table output streams; json and yaml print the
-final snapshot. Log targets are picked per pod: a problem pod contributes its failing container (the one
-waiting with the problem reason, else the first), read from the previous run when that container has
-restarted and is not running; a not-ready pod of an unhealthy workload contributes its first not-ready
-container. Containers that never started are skipped. Logs are read through the `pods/log` subresource
-(a GET, capped at 64 KiB per container), so the tool stays read-only (ADR-0003). Lines are untrusted
-output: escape sequences and control characters other than tab are removed, invalid UTF-8 is replaced,
-and lines are cut at 500 characters.
+`--wait` runs the same snapshot as a single call on every poll and compares it with the previous one
+(`healthSignature`), printing only when it differs. The state is compared as JSON without the events; the
+events are compared by object, reason and message only, so a repeat of a known warning (higher count or
+newer time) does not print. A new kind of warning, a status or count change, a restart count change or a
+changed log line does. The deadline is the start time plus `--timeout`, read from the injectable clock
+(`Options.Now`), and pauses go through `Options.Sleep`; the last pause is cut to the time left, so the
+final poll lands on the deadline. Only table output streams; json and yaml print the final snapshot.
+Errors reading the release record abort the wait; per-workload lookup errors leave the workload unhealthy
+and are retried on the next poll. Log targets are picked per pod: a problem pod contributes its failing
+container (the one waiting with the problem reason, else the first), read from the previous run when that
+container has restarted and is currently waiting (`CrashLoopBackOff`); a running or just-exited container
+shows its current log. A not-ready pod of an unhealthy workload contributes its first not-ready
+container. Containers that never started are skipped. Log requests run one pod at a time per workload,
+so the number of simultaneous log requests stays within `--concurrency`. Logs are read through the
+`pods/log` subresource (a GET, capped at 1 MiB per container), so the tool stays read-only (ADR-0003).
+`--logs` accepts 0 to 1000; anything else is an error. Lines are untrusted output: escape sequences
+(CSI, OSC, DCS/SOS/PM/APC strings), control characters other than tab and Unicode format characters
+(bidi overrides, zero-width characters) are removed, invalid UTF-8 is replaced, and lines are cut at 500
+characters. The same cleaning applies to log read error texts and to warning event reasons and messages.
 
 ## Invocation modes
 
