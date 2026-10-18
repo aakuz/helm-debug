@@ -102,6 +102,69 @@ The latest revision of a release has status `pending-*`, and it became pending m
 `--older-than` ago. The suggested fix is `helm rollback <release> <last deployed/superseded revision>`,
 or `helm uninstall` when no good revision exists (a failed first install).
 
+## Health
+
+Only `apps/v1` Deployments and StatefulSets of a revision are checked (hooks and other kinds are
+ignored); they are fetched through fixed resources, so no REST mapping is needed. Rollout rules:
+
+- Deployment: incomplete when `observedGeneration` is behind, `ProgressDeadlineExceeded` is set,
+  updated replicas are below the desired count, old replicas still exist, or available replicas are
+  below the desired count (the same checks as `kubectl rollout status`).
+- StatefulSet: incomplete when `observedGeneration` is behind or ready replicas are below the desired
+  count; updated replicas are compared against `replicas - partition`, and not at all for `OnDelete`.
+
+The release status is part of the decision too: `pending-install`, `pending-upgrade`, `pending-rollback`,
+`uninstalling` and `failed` are problems in both modes, even when the workloads look healthy, because an
+operation may still be in progress or have failed, and an old Deployment can look healthy during an
+upgrade. The table prints a `warning: release is <status>` line for them.
+
+Pods come from the workload's label selector, so workloads with overlapping selectors report each
+other's pods and old-ReplicaSet pods are included during a rollout. A pod is reported only when it
+failed or a container waits with a known bad reason; unschedulable `Pending` pods and `minReadySeconds`
+are only visible through the replica counts and events. Warning events of the last hour (a fixed
+window) are matched by involved object: the workload, its pods, and ReplicaSets named
+`<deployment>-<hash>`. Events never change the exit code; a lookup error for a workload does.
+
+`--wait` runs the same snapshot as a single call on every poll and compares it with the previous one
+(`healthSignature`), printing only when it differs. The state is compared as JSON without the events; the
+events are compared by object, reason and message only, so a repeat of a known warning (higher count or
+newer time) does not print. A new kind of warning, a status or count change, a restart count change or a
+changed log line does (with `--tail` the signature is taken without logs, see below). The deadline is the
+start time plus `--timeout`, read from the injectable clock (`Options.Now`), and pauses go through
+`Options.Sleep`; the last pause is cut to the time left, so the final poll lands on the deadline. Only
+table output streams; json and yaml print the final snapshot. Errors reading the release record abort the
+wait; per-workload lookup errors leave the workload unhealthy and are retried on the next poll. Log
+targets are picked per pod: a problem pod contributes its failing container (the one waiting with the
+problem reason, else the first), read from the previous run when that container has restarted and is
+currently waiting (`CrashLoopBackOff`); a running or just-exited container shows its current log. A
+not-ready pod of an unhealthy workload contributes its first not-ready container. Containers that never
+started are skipped. Log requests run one pod at a time per workload, so the number of simultaneous log
+requests stays within `--concurrency`. Logs are read through the `pods/log` subresource (a GET, capped at
+1 MiB per container), so the tool stays read-only (ADR-0003). `--logs` and `--all-logs` each accept 0 to
+1000; anything else is an error. Lines are untrusted output: escape sequences (CSI, OSC, DCS/SOS/PM/APC
+strings), control characters other than tab and Unicode format characters (bidi overrides, zero-width
+characters) are removed, invalid UTF-8 is replaced, and lines are cut at 500 characters. The same
+cleaning applies to log read error texts and to warning event reasons and messages.
+
+Each log target carries its own line count (`logTarget.lines`), which keeps `--logs` and `--all-logs`
+independent: the failing container of a pod that needs attention gets `--logs` lines (or `--all-logs` when
+`--logs` is off), and with `--all-logs` every other started container of every pod, init containers included, gets
+`--all-logs` lines.
+Targets with zero lines are dropped.
+
+`--tail` keeps, per log stream, the window of lines already printed (`logMemory`, keyed by namespace, pod,
+container, previous-run flag, container ID and restart count). A restart changes the key, so the new run is a
+new stream: its log is printed in full, under a heading without `new lines`, even when it reads exactly like
+the crashed run before. Streams absent from a poll are forgotten (`logMemory.news`), so a pod that is deleted
+or replaced, even by one with the same name, is shown in full again. The change signature is taken from the
+snapshot without logs (`withoutLogs`), so a log change alone prints only the state line and the new lines.
+`newLines` returns the lines after the longest suffix of the old window that is also a prefix of the new
+window; when there is no overlap the whole new window is printed. Known limits: the match uses no timestamps,
+so identical lines cannot be told apart, and lines that repeat the old window exactly (for example a repeated
+heartbeat) can be hidden; when more lines arrive between two polls than the window holds (`--logs` or
+`--all-logs` N), the lines in between are not shown. A read error is remembered per stream and printed again
+only when its text changes.
+
 ## Invocation modes
 
 One `main`, built twice by goreleaser as `helm-debug` and `kubectl-helm_debug`, plus a Helm plugin

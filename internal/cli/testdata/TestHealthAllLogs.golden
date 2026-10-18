@@ -1,0 +1,21 @@
+Release prod/web revision 1 (deployed)
+
+KIND         NAMESPACE  NAME  READY  STATUS     DETAILS
+Deployment   prod       web   1/3    unhealthy  1 of 3 available
+StatefulSet  prod       db    1/1    healthy    -
+
+Pods with problems:
+POD      PHASE    REASON            RESTARTS
+web-aaa  Running  CrashLoopBackOff  7
+web-bbb  Pending  ImagePullBackOff  0
+
+Logs of web-aaa (container main, previous run):
+  starting
+  panic: no database
+
+Logs of web-ccc (container main):
+  healthy replica log
+
+Logs of web-ddd (container main):
+  listening on :8080
+  readiness probe failed

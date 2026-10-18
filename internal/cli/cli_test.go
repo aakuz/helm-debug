@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -53,6 +54,15 @@ type cluster struct {
 	t    *testing.T
 	kube *kubefake.Clientset
 	live []runtime.Object
+	// logs maps "pod/container" (suffixed "!previous" for a previous run) to log text.
+	logs     map[string]string
+	logCalls []string
+	logTail  int64
+	// logTails maps a log key to the number of lines asked for in its last request.
+	logTails map[string]int64
+	// logErrors maps a log key to an error text returned by the fake reader.
+	logErrors map[string]string
+	logMu     sync.Mutex
 }
 
 func newCluster(t *testing.T) *cluster {
@@ -121,6 +131,8 @@ func (c *cluster) clients(namespace string) *Clients {
 		mapper.AddSpecific(k.gvk, k.gvk.GroupVersion().WithResource(k.resource), k.gvk.GroupVersion().WithResource(strings.ToLower(k.gvk.Kind)), scope)
 		listKinds[k.gvk.GroupVersion().WithResource(k.resource)] = k.gvk.Kind + "List"
 	}
+	listKinds[schema.GroupVersionResource{Version: "v1", Resource: "pods"}] = "PodList"
+	listKinds[schema.GroupVersionResource{Version: "v1", Resource: "events"}] = "EventList"
 	return &Clients{
 		Store: &helm.Store{
 			Kube:     c.kube,
@@ -132,6 +144,7 @@ func (c *cluster) clients(namespace string) *Clients {
 			Mapper:  mapper,
 		},
 		Namespace: namespace,
+		Logs:      c.readLog,
 	}
 }
 

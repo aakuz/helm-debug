@@ -15,6 +15,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`find`** – which release(s) declare a given object.
 - **`history`** – revisions with status, chart/app version and the stored failure reason.
 - **`stuck`** – releases stuck in `pending-install/upgrade/rollback` and the command that unlocks them.
+- **`health`** – readiness of the release's Deployments and StatefulSets, crashing pods and recent warning events.
 
 The tool is strictly read-only. When it finds a problem it prints the `kubectl`/`helm` command
 that fixes it, but never runs it. Output is a table by default, or `-o json|yaml` for scripts
@@ -28,6 +29,7 @@ helm-debug history backend -n prod     # what happened to a release, and why the
 helm-debug diff backend 1 2 -n prod    # what changed between two revisions
 helm-debug resources backend -n prod   # do the declared objects exist, and does Helm own them
 helm-debug drift backend -n prod       # did someone edit the objects by hand
+helm-debug health backend -n prod      # are the workloads rolled out and are pods crashing
 helm-debug find deploy/backend -A      # which release owns this object
 ```
 
@@ -236,6 +238,160 @@ prod       backend  3         pending-upgrade  7h   helm rollback backend 2 -n p
 Releases that became pending less than `--older-than` ago (default `5m`) are skipped, because they
 may still be in progress.
 
+### health
+
+```console
+$ helm-debug health web -n prod
+Release prod/web revision 1 (deployed)
+
+KIND         NAMESPACE  NAME  READY  STATUS     DETAILS
+Deployment   prod       web   1/3    unhealthy  1 of 3 available
+StatefulSet  prod       db    1/2    unhealthy  1 of 2 ready
+
+Pods with problems:
+POD      PHASE    REASON            RESTARTS
+web-aaa  Running  CrashLoopBackOff  7
+web-bbb  Pending  ImagePullBackOff  0
+
+Warning events (last hour):
+LAST SEEN  OBJECT               REASON        COUNT  MESSAGE
+5m         ReplicaSet/web-5d8f  FailedCreate  1      exceeded quota
+10m        Pod/web-aaa          BackOff       12     Back-off restarting failed container
+```
+
+Checks the Deployments and StatefulSets declared by a release revision; hooks and other kinds are
+ignored. For a Deployment, the rollout is incomplete when the controller has not observed the
+current generation, replicas are not yet updated or available, old replicas are still pending
+termination, or the rollout reports `ProgressDeadlineExceeded`. For a StatefulSet, it is incomplete
+when the generation is not observed, replicas are not ready, or replicas below the
+`rollingUpdate.partition` are not updated (the update check is skipped for `OnDelete`).
+
+Pods are found through the workload's label selector and listed under "Pods with problems" only
+when they failed, or a container is waiting with `CrashLoopBackOff`, `ImagePullBackOff`,
+`ErrImagePull`, `InvalidImageName`, `CreateContainerConfigError`, `CreateContainerError` or
+`RunContainerError`. Restarts are summed over init and regular containers. Warning events from the
+last hour are shown for the workloads, their ReplicaSets and their pods.
+
+`--revision N` (`-r`) inspects an older revision. `-o json` and `-o yaml` return the same data,
+including the events. The command is read-only: it only GETs the workloads, LISTs pods and events
+in their namespaces, and reads the release records like the other commands.
+
+Exit code is 0 when the release status is not a problem status, every workload is rolled out and no pod
+is listed. It is 2 when the release status is `pending-install`, `pending-upgrade`, `pending-rollback`,
+`uninstalling` or `failed` (its workloads may not reflect the latest revision yet, so the table prints
+a `warning: release is <status>` line), when a workload is not fully rolled out, absent or could not be
+read (status `error`), or when a pod with problems is listed. Warning events alone do not cause 2. Errors
+that stop the command (for example, no such release or no access to the release records) exit 1.
+
+Within one snapshot the output comes in this order: the release line, the workloads table, the pods with
+problems, the warning events and, last, the logs, which are the longest part.
+
+`--logs N` (default `0`, off) adds the last N log lines of the containers that explain a problem, and
+`--all-logs M` (default `0`, off) adds the last M lines of every started container of every pod, init
+containers included, healthy pods included. N and M must be between 0 and 1000, otherwise the command
+fails. The two are independent and can be combined: the container that explains a problem in a pod that
+needs attention (listed under "Pods with problems", or not Ready in an unhealthy workload) gets N lines,
+and every other started container gets M lines. With `--all-logs` alone, the pods that need attention get
+M lines too; with `--logs` alone, only the pods that need attention are read. Logs are read through the
+`pods/log` subresource, a read-only GET capped at 1 MiB per container, one pod at a time per workload, so
+both flags need the same `get` on `pods/log`. A container that has restarted and is currently waiting
+(for example `CrashLoopBackOff`) shows the log of its previous run; a container that is running or has
+just exited shows its current log. Containers that never started (`ImagePullBackOff`, `ErrImagePull`,
+`InvalidImageName`, `CreateContainerConfigError`) have no log and are skipped. Each log is printed under
+`Logs of POD (container NAME[, previous run]):`, indented by two spaces. A failed log request prints
+`warning: unavailable: <error>` and does not change the exit code. Log lines are untrusted container
+output: terminal escape sequences (CSI, OSC, DCS, SOS, PM and APC strings) and control characters (except
+tab) are removed, Unicode format characters (bidi overrides, zero-width characters) are removed, invalid
+UTF-8 is replaced, and lines longer than 500 characters are cut with an ellipsis. The same cleaning
+applies to log read error texts and to warning event reasons and messages. In `-o json` and `-o yaml` the
+logs are a `logs` array per workload (`pod`, `container`, `previous`, `lines`, `error`), and problem pods
+gain a `container` field.
+
+`--wait` (`-w`) polls until the release is healthy: the release status is not a problem status, every
+workload is rolled out and no pod is listed, which is the condition under which exit code 0 is returned
+without it. `--interval` (default `2s`) is the time between polls and `--timeout` (default `5m`) the
+total wait; both must be positive, and passing either without `--wait` is an error (`--timeout requires
+--wait`). In table mode the state is printed on the first poll and again whenever it changes: a status or
+count change, a restart count change, a new or changed problem pod, a new kind of warning event, or a
+changed log line when `--logs` or `--all-logs` is set. A repeat of a known warning event (higher count or
+newer time, same object, reason and message) does not print a new snapshot. Each print starts with a
+`[HH:MM:SS +ELAPSED] healthy|unhealthy` line, and polls without a change print nothing. On success the
+command exits 0. When the timeout passes first it prints `timed out after DURATION, the release is still
+unhealthy` and exits 2. Ctrl-C stops the command like any other tool (the shell reports 130). Errors
+reading the release record (unknown release, storage errors) abort the wait with exit 1; per-workload
+lookup errors are retried until the timeout. With `-o json` or `-o yaml` nothing is streamed; only the
+final snapshot is printed.
+
+`--tail` (with `--wait`, and with `--logs` or `--all-logs`; otherwise the command fails with `--tail requires
+--wait` or `--tail requires --logs or --all-logs`) follows the logs like `tail -f`. The first poll prints the
+logs in full. Later polls print only the log lines that were not shown before, under headings such as
+`Logs of POD (container NAME, previous run, new lines):`. A log stream is one run of one container of a pod,
+identified by namespace, pod, container, previous-run flag, container ID and restart count. Only a stream that
+continues a log already shown gets the `new lines` label. A restart starts a new stream, so its log is printed
+in full under a heading without `new lines`, even when it reads exactly like the log of the crashed run before
+(a deterministic crash loop). A stream that is absent from a poll (the pod was deleted or replaced) is
+forgotten, so a pod that comes back, even with the same name, is shown in full again. A poll where only the
+logs changed prints just the `[HH:MM:SS +ELAPSED] healthy|unhealthy` line and the new lines, without repeating
+the table; a poll where the state changed prints the state without the logs, followed by the new lines; a poll
+with nothing new prints nothing. Without `--tail` every update repeats the whole tail. New lines are found by
+matching the end of the previously shown window with the start of the new one; when they do not overlap, the
+whole new window is printed. Known limits: the match uses no timestamps, so identical lines cannot be told
+apart, and lines that repeat the old window exactly (for example a repeated heartbeat) can be hidden; when more
+lines arrive between two polls than the window holds (`--logs` or `--all-logs` N), the lines in between are not
+shown. In tail mode a read error is shown once, and again only when its text changes. With `-o json` or
+`-o yaml`, `--tail` has no effect: the final snapshot carries the full tail.
+
+```console
+$ helm-debug health backend -n prod --wait --logs 5
+[12:00:00 +0s] unhealthy
+Release prod/backend revision 2 (deployed)
+
+KIND        NAMESPACE  NAME     READY  STATUS     DETAILS
+Deployment  prod       backend  1/3    unhealthy  1 of 3 available
+
+Pods with problems:
+POD          PHASE    REASON            RESTARTS
+backend-aaa  Running  CrashLoopBackOff  7
+
+Logs of backend-aaa (container main, previous run):
+  starting
+  panic: no database
+
+...
+
+[12:00:04 +4s] healthy
+Release prod/backend revision 2 (deployed)
+
+KIND        NAMESPACE  NAME     READY  STATUS   DETAILS
+Deployment  prod       backend  3/3    healthy  -
+```
+
+With `--tail` the first poll prints the logs in full, and each later poll prints only the new lines:
+
+```console
+$ helm-debug health backend -n prod -w --logs 10 --tail
+[12:00:00 +0s] unhealthy
+Release prod/backend revision 1 (deployed)
+
+KIND        NAMESPACE  NAME     READY  STATUS     DETAILS
+Deployment  prod       backend  1/3    unhealthy  1 of 3 available
+
+Pods with problems:
+POD          PHASE    REASON            RESTARTS
+backend-aaa  Running  CrashLoopBackOff  7
+
+Logs of backend-aaa (container main, previous run):
+  starting
+  panic: no database
+
+[12:00:02 +2s] unhealthy
+
+Logs of backend-aaa (container main, previous run, new lines):
+  retry 1
+
+...
+```
+
 ## Output and colors
 
 `table` output is meant for people; `-o json` and `-o yaml` carry the same data for scripts, with
@@ -278,6 +434,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 | `history` | `list` on secrets (or configmaps) in the release namespace |
 | `find` | `get` on the object; `list` + `get` on secrets (or configmaps) cluster-wide for the scan |
 | `stuck` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
+| `health` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the Deployments and StatefulSets, `list` on pods and events in their namespaces, `get` on `pods/log` with `--logs` or `--all-logs` |
 
 ## Development
 

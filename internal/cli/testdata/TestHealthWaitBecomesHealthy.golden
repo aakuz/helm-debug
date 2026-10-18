@@ -1,0 +1,36 @@
+[12:00:00 +0s] unhealthy
+Release prod/web revision 1 (deployed)
+
+KIND         NAMESPACE  NAME  READY  STATUS     DETAILS
+Deployment   prod       web   1/3    unhealthy  1 of 3 available
+StatefulSet  prod       db    1/1    healthy    -
+
+Pods with problems:
+POD      PHASE    REASON            RESTARTS
+web-aaa  Running  CrashLoopBackOff  7
+
+Logs of web-aaa (container main, previous run):
+  starting
+  panic: no database
+
+[12:00:02 +2s] unhealthy
+Release prod/web revision 1 (deployed)
+
+KIND         NAMESPACE  NAME  READY  STATUS     DETAILS
+Deployment   prod       web   2/3    unhealthy  2 of 3 available
+StatefulSet  prod       db    1/1    healthy    -
+
+Pods with problems:
+POD      PHASE    REASON            RESTARTS
+web-aaa  Running  CrashLoopBackOff  7
+
+Logs of web-aaa (container main, previous run):
+  starting
+  connection refused
+
+[12:00:04 +4s] healthy
+Release prod/web revision 1 (deployed)
+
+KIND         NAMESPACE  NAME  READY  STATUS   DETAILS
+Deployment   prod       web   3/3    healthy  -
+StatefulSet  prod       db    1/1    healthy  -

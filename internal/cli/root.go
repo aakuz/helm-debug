@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +34,8 @@ type Clients struct {
 	Store     *helm.Store
 	Cluster   *kube.Cluster
 	Namespace string
+	// Logs reads container logs; nil disables log output.
+	Logs kube.LogReader
 }
 
 // Options holds global flags and dependencies.
@@ -47,6 +50,8 @@ type Options struct {
 
 	Out, ErrOut io.Writer
 	Now         func() time.Time
+	// Sleep pauses between polls of --wait; tests replace it to advance a fake clock.
+	Sleep func(ctx context.Context, d time.Duration) error
 	// NewClients builds cluster clients; tests replace it with fakes.
 	NewClients func(o *Options) (*Clients, error)
 	// Color forces colored output on or off; nil means auto-detect.
@@ -62,6 +67,7 @@ func NewOptions() *Options {
 		Out:         os.Stdout,
 		ErrOut:      os.Stderr,
 		Now:         time.Now,
+		Sleep:       sleepContext,
 		NewClients:  realClients,
 	}
 	applyHelmEnv(o.Flags)
@@ -128,6 +134,7 @@ func realClients(o *Options) (*Clients, error) {
 		Store:     &helm.Store{Kube: kc, Metadata: mc, Driver: drv},
 		Cluster:   &kube.Cluster{Dynamic: dc, Mapper: mapper},
 		Namespace: ns,
+		Logs:      kube.PodLogReader(kc),
 	}, nil
 }
 
@@ -181,6 +188,7 @@ func NewRootCommand(o *Options) *cobra.Command {
 		newFindCommand(o),
 		newHistoryCommand(o),
 		newStuckCommand(o),
+		newHealthCommand(o),
 	)
 	return root
 }
