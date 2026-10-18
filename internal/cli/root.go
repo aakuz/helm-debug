@@ -15,9 +15,11 @@ import (
 
 	"github.com/spf13/cobra"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/metadata"
+	"k8s.io/client-go/rest"
 
 	"github.com/aakuz/helm-debug/internal/helm"
 	"github.com/aakuz/helm-debug/internal/kube"
@@ -56,12 +58,18 @@ type Options struct {
 	NewClients func(o *Options) (*Clients, error)
 	// Color forces colored output on or off; nil means auto-detect.
 	Color *bool
+	// Progress forces the progress line on stderr on or off; nil means show it when stderr is a terminal.
+	Progress *bool
 }
 
 // NewOptions returns options with defaults taken from the environment.
 func NewOptions() *Options {
+	flags := genericclioptions.NewConfigFlags(true).WithWrapConfigFn(func(cfg *rest.Config) *rest.Config {
+		cfg.WarningHandlerWithContext = deprecationWarningFilter{}
+		return cfg
+	})
 	o := &Options{
-		Flags:       genericclioptions.NewConfigFlags(true),
+		Flags:       flags,
 		Storage:     os.Getenv("HELM_DRIVER"),
 		Concurrency: 8,
 		Out:         os.Stdout,
@@ -73,6 +81,15 @@ func NewOptions() *Options {
 	applyHelmEnv(o.Flags)
 	o.Verbose, _ = strconv.ParseBool(os.Getenv("HELM_DEBUG"))
 	return o
+}
+
+type deprecationWarningFilter struct{}
+
+func (deprecationWarningFilter) HandleWarningHeaderWithContext(ctx context.Context, code int, agent, message string) {
+	if strings.Contains(message, " is deprecated ") {
+		return
+	}
+	rest.WarningLogger{}.HandleWarningHeaderWithContext(ctx, code, agent, message)
 }
 
 // applyHelmEnv uses the variables helm passes to plugins as flag defaults, so
@@ -130,9 +147,13 @@ func realClients(o *Options) (*Clients, error) {
 	if err != nil {
 		return nil, err
 	}
+	disc, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
 	return &Clients{
 		Store:     &helm.Store{Kube: kc, Metadata: mc, Driver: drv},
-		Cluster:   &kube.Cluster{Dynamic: dc, Mapper: mapper},
+		Cluster:   &kube.Cluster{Dynamic: dc, Mapper: mapper, Discovery: disc, Metadata: mc},
 		Namespace: ns,
 		Logs:      kube.PodLogReader(kc),
 	}, nil
@@ -189,6 +210,7 @@ func NewRootCommand(o *Options) *cobra.Command {
 		newHistoryCommand(o),
 		newStuckCommand(o),
 		newHealthCommand(o),
+		newLostFoundCommand(o),
 	)
 	return root
 }

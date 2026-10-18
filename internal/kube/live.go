@@ -10,7 +10,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/metadata"
 )
 
 // Helm ownership metadata keys.
@@ -37,8 +39,10 @@ const (
 
 // Cluster resolves kinds and fetches live objects.
 type Cluster struct {
-	Dynamic dynamic.Interface
-	Mapper  meta.RESTMapper
+	Dynamic   dynamic.Interface
+	Mapper    meta.RESTMapper
+	Discovery discovery.DiscoveryInterface
+	Metadata  metadata.Interface
 }
 
 // Resolved is a kind mapped to its API resource.
