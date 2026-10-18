@@ -1,7 +1,8 @@
 # helm-debug
 
-Debug Helm releases by reading their records straight from the cluster storage
-(the `sh.helm.release.v1.*` Secrets or ConfigMaps), without running Helm operations.
+Read-only CLI for debugging Helm releases. It reads release records straight from the cluster
+storage (the `sh.helm.release.v1.*` Secrets or ConfigMaps) and compares them with live objects,
+without running Helm operations and without changing anything in the cluster.
 
 - **`resources`** – which objects a release revision declares (hooks included), whether they exist
   and whether they carry the ownership metadata Helm needs to manage them.
@@ -12,7 +13,19 @@ Debug Helm releases by reading their records straight from the cluster storage
 - **`stuck`** – releases stuck in `pending-install/upgrade/rollback` and the command that unlocks them.
 
 The tool is strictly read-only. When it finds a problem it prints the `kubectl`/`helm` command
-that fixes it, but never runs it.
+that fixes it, but never runs it. Output is a table by default, or `-o json|yaml` for scripts
+and CI; table output is highlighted in a terminal (see [Output and colors](#output-and-colors)).
+
+## Quick start
+
+```bash
+helm-debug stuck -A                    # which releases are locked, and how to unlock them
+helm-debug history backend -n prod     # what happened to a release, and why the last upgrade failed
+helm-debug diff backend 1 2 -n prod    # what changed between two revisions
+helm-debug resources backend -n prod   # do the declared objects exist, and does Helm own them
+helm-debug drift backend -n prod       # did someone edit the objects by hand
+helm-debug find deploy/backend -A      # which release owns this object
+```
 
 It works on Linux, macOS and Windows and can be run three ways:
 
@@ -129,17 +142,18 @@ paths: one document per drifted object, separated by `---` and preceded by a `# 
 comment, with a `# removed: /path` comment for fields missing from the live object. A drifted path
 inside a list includes the whole live list. Secret values print as `<masked>` unless
 `--show-secrets` is set, in which case they appear base64-encoded as stored (`stringData` is folded
-into `data`). Absent objects and lookup errors appear as `# absent:` / `# error:` comments. The output is not mapped to chart values keys: the manifest is already
-rendered, so you map the fields to your values by hand. The flag is ignored with `-o json` or
-`-o yaml`, which already carry the data. The exit code is unchanged.
+into `data`). Absent objects and lookup errors appear as `# absent:` / `# error:` comments. The
+output is not mapped to chart values keys: the manifest is already rendered, so you map the fields
+to your values by hand. The flag is ignored with `-o json` or `-o yaml`, which already carry the
+data. The exit code is unchanged.
 
 Status and server-managed metadata (such as `managedFields`, `resourceVersion`, UID and timestamps)
 are ignored. Fields present only on live objects are ignored to avoid reporting API defaults and
-controller additions. ConfigMap/Secret payload maps (`data` and ConfigMap `binaryData`) are compared in full, including
-added keys. Other additions outside the declared fields are not detected. Kubernetes resource
-quantities in standard workload and storage fields are compared by value (for example, `100m`
-CPU equals `0.1`). Lists
-are compared in order, including their length; list reordering can be reported as drift. Secret
+controller additions. ConfigMap/Secret payload maps (`data` and ConfigMap `binaryData`) are
+compared in full, including added keys. Other additions outside the declared fields are not
+detected. Kubernetes resource quantities in standard workload and storage fields are compared by
+value (for example, `100m` CPU equals `0.1`). Lists are compared in order, including their length;
+list reordering can be reported as drift. Secret
 `stringData` is compared against its stored `data` representation. Hooks are excluded because Helm
 commonly deletes them after execution. This compares stored intent, not a newly rendered chart.
 
@@ -175,8 +189,8 @@ Compares the stored manifests and the user-supplied values (`helm get values`) o
 Objects are matched by apiVersion, kind, namespace and name and reported as `added`, `removed` or
 `changed`, with a unified-style diff of each object's YAML. Hooks are excluded, as in `drift`.
 Secret `data` and `stringData` values are masked unless `--show-secrets` is set: unchanged values
-print as `<masked>`, and a value that changed prints as `<masked:old>` and `<masked:new>`. User values are shown as stored, so do not
-keep secrets in them. `-o json` and `-o yaml` return the objects with their status and diff text,
+print as `<masked>`, and a value that changed prints as `<masked:old>` and `<masked:new>`. User
+values are shown as stored, so do not keep secrets in them. `-o json` and `-o yaml` return the objects with their status and diff text,
 and the values diff. Only storage records are read, never live objects.
 
 Exit code is 0 whether or not the revisions differ; unknown revisions and other errors exit 1.
@@ -218,6 +232,30 @@ prod       backend  3         pending-upgrade  7h   helm rollback backend 2 -n p
 Releases that became pending less than `--older-than` ago (default `5m`) are skipped, because they
 may still be in progress.
 
+## Output and colors
+
+`table` output is meant for people; `-o json` and `-o yaml` carry the same data for scripts, with
+no colors. In a terminal, `table` output is highlighted:
+
+| Element | Color |
+|---|---|
+| Resource names in `diff` and `drift` | bold magenta |
+| Healthy statuses (`deployed`, `present`, `ok`, `in-sync`, `added`) | green |
+| Problem statuses (`failed`, `absent`, `missing`, `mismatch`, `unknown-kind`, `removed`) | red |
+| In-progress or modified statuses (`pending-*`, `uninstalling`, `drifted`, `changed`) | yellow |
+| Added / removed lines and `@@` hunk headers in diffs | green / red / cyan |
+
+Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` is set.
+
+## Configuration
+
+| Variable | Effect |
+|---|---|
+| `HELM_DRIVER` | Default for `--storage` (`secret` or `configmap`) |
+| `HELM_DEBUG=true` | Same as `--verbose` |
+| `NO_COLOR` | Disable colored output |
+| `HELM_NAMESPACE`, `HELM_KUBECONTEXT`, `HELM_KUBETOKEN`, `HELM_KUBEAPISERVER`, … | Defaults for the matching kubectl flags, set by Helm when run as `helm debug` |
+
 ## Exit codes
 
 | Code | Meaning |
@@ -249,6 +287,11 @@ make e2e            # kind cluster + real helm releases (needs docker, kind, kub
 
 Design notes live in [docs/DESIGN.md](docs/DESIGN.md), decisions in [docs/adr](docs/adr).
 Planned work is tracked in [issues labelled `roadmap`](https://github.com/aakuz/helm-debug/issues?q=label%3Aroadmap).
+
+## Contributing
+
+Open an issue to discuss a change, then send a pull request. Keep the tool read-only (ADR-0003),
+write a failing test first, and make sure `make test`, `make lint` and `make e2e` pass.
 
 ## License
 
