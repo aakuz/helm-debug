@@ -9,7 +9,7 @@ import (
 )
 
 // maxLogBytes bounds how much log text is read for one container.
-const maxLogBytes = 64 << 10
+const maxLogBytes = 1 << 20
 
 // LogReader returns the last tail lines of a container's log (of its previous run when previous is set).
 type LogReader func(ctx context.Context, namespace, pod, container string, tail int64, previous bool) (string, error)

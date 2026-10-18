@@ -6,13 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/spf13/cobra"
+	"helm.sh/helm/v4/pkg/release/common"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,8 +32,8 @@ const (
 	unhealthy = "unhealthy"
 )
 
-// maxLogLine is the longest log line printed; longer lines are cut.
-const maxLogLine = 500
+// maxLogs is the largest accepted --logs value.
+const maxLogs = 1000
 
 // noLogs are waiting reasons of containers that never started, so they have no log to read.
 var noLogs = map[string]bool{
@@ -102,7 +101,20 @@ type healthResult struct {
 	EventsError string           `json:"eventsError,omitempty"`
 }
 
+// releaseProblem reports whether a release status means the release is not (yet) in a good state:
+// an operation is in progress, so the workloads may not reflect the new revision, or it failed.
+func releaseProblem(status string) bool {
+	switch common.Status(status) {
+	case common.StatusPendingInstall, common.StatusPendingUpgrade, common.StatusPendingRollback, common.StatusUninstalling, common.StatusFailed:
+		return true
+	}
+	return false
+}
+
 func (r *healthResult) problems() bool {
+	if releaseProblem(r.Status) {
+		return true
+	}
 	for _, w := range r.Workloads {
 		if w.Status != healthy || len(w.Pods) > 0 {
 			return true
@@ -137,8 +149,13 @@ Exits with code 2 when a workload is not fully rolled out or absent, or a pod is
   helm-debug health backend -o json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if logLines < 0 {
-				return fmt.Errorf("--logs must not be negative")
+			if logLines < 0 || logLines > maxLogs {
+				return fmt.Errorf("--logs must be between 0 and %d", maxLogs)
+			}
+			for _, f := range []string{"timeout", "interval"} {
+				if !wait && cmd.Flags().Changed(f) {
+					return fmt.Errorf("--%s requires --wait", f)
+				}
 			}
 			if wait && timeout <= 0 {
 				return fmt.Errorf("--timeout must be positive")
@@ -189,7 +206,7 @@ func waitHealth(cmd *cobra.Command, o *Options, c *Clients, name string, revisio
 		ok := !res.problems()
 		now := o.Now()
 		if table {
-			if sig, _ := json.Marshal(res); !bytes.Equal(sig, last) {
+			if sig := healthSignature(res); !bytes.Equal(sig, last) {
 				if last != nil {
 					fmt.Fprintln(o.Out)
 				}
@@ -219,6 +236,22 @@ func waitHealth(cmd *cobra.Command, o *Options, c *Clients, name string, revisio
 			return err
 		}
 	}
+}
+
+// healthSignature identifies the state worth printing again. A repeat of a known warning only bumps the
+// event's count and time, so events are identified by what they say, not by how often they happened.
+func healthSignature(res *healthResult) []byte {
+	rest := *res
+	rest.Events = nil
+	events := make([]string, len(res.Events))
+	for i, e := range res.Events {
+		events[i] = e.Object + "|" + e.Reason + "|" + e.Message
+	}
+	sig, _ := json.Marshal(struct {
+		State  healthResult
+		Events []string
+	}{rest, events})
+	return sig
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {
@@ -305,7 +338,7 @@ func runHealth(cmd *cobra.Command, o *Options, c *Clients, name string, revision
 			}
 		}
 		if logLines > 0 && c.Logs != nil {
-			w.Logs = readLogs(cmd, o, c, w.Namespace, targets, logLines)
+			w.Logs = readLogs(cmd, c, w.Namespace, targets, logLines)
 		}
 	})
 
@@ -438,7 +471,7 @@ func logTargetOf(p corev1.Pod, problem *podHealth, workloadUnhealthy bool) (logT
 	if cs == nil || cs.State.Waiting != nil && cs.RestartCount == 0 {
 		return logTarget{}, false // no container, or one that never started and has no log
 	}
-	return logTarget{pod: p.Name, container: cs.Name, previous: cs.RestartCount > 0 && cs.State.Running == nil}, true
+	return logTarget{pod: p.Name, container: cs.Name, previous: cs.RestartCount > 0 && cs.State.Waiting != nil}, true
 }
 
 func podReady(p corev1.Pod) bool {
@@ -450,46 +483,20 @@ func podReady(p corev1.Pod) bool {
 	return false
 }
 
-func readLogs(cmd *cobra.Command, o *Options, c *Clients, namespace string, targets []logTarget, tail int) []podLog {
+// readLogs reads the targets one by one: workloads are already read in parallel, so this keeps the
+// number of simultaneous log requests within --concurrency.
+func readLogs(cmd *cobra.Command, c *Clients, namespace string, targets []logTarget, tail int) []podLog {
 	logs := make([]podLog, len(targets))
-	parallel(len(targets), o.Concurrency, func(i int) {
-		t := targets[i]
+	for i, t := range targets {
 		logs[i] = podLog{Pod: t.pod, Container: t.container, Previous: t.previous}
 		text, err := c.Logs(cmd.Context(), namespace, t.pod, t.container, int64(tail), t.previous)
 		if err != nil {
-			logs[i].Error = err.Error()
-			return
+			logs[i].Error = cleanLine(err.Error())
+			continue
 		}
 		logs[i].Lines = sanitizeLog(text)
-	})
+	}
 	return logs
-}
-
-// logEscape matches terminal escape sequences: CSI, OSC and two-byte escapes.
-var logEscape = regexp.MustCompile("\x1b(?:\\[[0-?]*[ -/]*[@-~]|\\][^\x07\x1b]*(?:\x07|\x1b\\\\)?|[@-Z\\\\-_])")
-
-// sanitizeLog splits untrusted container output into printable lines: escape sequences and control
-// characters other than tab are removed, trailing blank lines dropped and long lines cut.
-func sanitizeLog(text string) []string {
-	text = strings.ToValidUTF8(text, "\uFFFD")
-	text = logEscape.ReplaceAllString(text, "")
-	lines := strings.Split(text, "\n")
-	for i, l := range lines {
-		l = strings.Map(func(r rune) rune {
-			if r == '\t' || !unicode.IsControl(r) {
-				return r
-			}
-			return -1
-		}, l)
-		if r := []rune(l); len(r) > maxLogLine {
-			l = string(r[:maxLogLine]) + "…"
-		}
-		lines[i] = l
-	}
-	for len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
-	return lines
 }
 
 // warningEvents returns recent Warning events about the workloads, their ReplicaSets and their pods.
@@ -530,7 +537,7 @@ func warningEvents(cmd *cobra.Command, c *Clients, workloads []workloadHealth, p
 			if !match || now.Sub(last) > eventWindow {
 				continue
 			}
-			events = append(events, healthEvent{Object: inv.Kind + "/" + inv.Name, Reason: ev.Reason, Message: ev.Message, Count: ev.Count, LastSeen: last.UTC()})
+			events = append(events, healthEvent{Object: cleanLine(inv.Kind + "/" + inv.Name), Reason: cleanLine(ev.Reason), Message: cleanLine(ev.Message), Count: ev.Count, LastSeen: last.UTC()})
 		}
 	}
 	sort.SliceStable(events, func(i, j int) bool {
@@ -556,6 +563,9 @@ func eventTime(ev corev1.Event) time.Time {
 
 func printHealth(o *Options, w io.Writer, res *healthResult) {
 	fmt.Fprintf(w, "Release %s/%s revision %d (%s)\n\n", res.Namespace, res.Release, res.Revision, o.paint(res.Status, statusColor(res.Status)))
+	if releaseProblem(res.Status) {
+		fmt.Fprintf(w, "%s release is %s, so its workloads may not reflect the latest revision yet\n\n", o.paint("warning:", yellow), res.Status)
+	}
 	if len(res.Workloads) == 0 {
 		fmt.Fprintln(w, "no Deployments or StatefulSets in this release revision")
 		return

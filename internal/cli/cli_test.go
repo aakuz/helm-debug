@@ -58,7 +58,9 @@ type cluster struct {
 	logs     map[string]string
 	logCalls []string
 	logTail  int64
-	logMu    sync.Mutex
+	// logErrors maps a log key to an error text returned by the fake reader.
+	logErrors map[string]string
+	logMu     sync.Mutex
 }
 
 func newCluster(t *testing.T) *cluster {

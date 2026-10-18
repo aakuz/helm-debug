@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"helm.sh/helm/v4/pkg/release/common"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -232,4 +234,84 @@ func equalDurations(a, b []time.Duration) bool {
 		}
 	}
 	return true
+}
+
+func TestHealthUnsettledReleaseIsAProblem(t *testing.T) {
+	for _, status := range []common.Status{common.StatusPendingInstall, common.StatusPendingUpgrade, common.StatusPendingRollback, common.StatusUninstalling, common.StatusFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			c := newCluster(t)
+			c.release("web", "prod", 1, status, healthManifest)
+			c.deployment("web", 1, 1, 1, 1, 1, 1)
+			c.statefulSet("db", 1, 1, 1)
+			out, err := run(t, c, "prod", "health", "web")
+			wantProblems(t, err, true)
+			if !strings.Contains(out, "release is "+string(status)) {
+				t.Fatalf("want a note about the release status:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestHealthWaitWaitsForPendingRelease(t *testing.T) {
+	c := newCluster(t)
+	c.release("web", "prod", 1, common.StatusPendingUpgrade, healthManifest)
+	c.deployment("web", 1, 1, 1, 1, 1, 1) // the old pods still look healthy
+	c.statefulSet("db", 1, 1, 1)
+	r := runWait(t, c, func(n int, _ *Clients) {
+		if n == 1 {
+			c.release("web", "prod", 2, common.StatusDeployed, healthManifest)
+		}
+	}, "health", "web", "--wait")
+	wantProblems(t, r.err, false)
+	if len(r.sleeps) != 1 || !strings.Contains(r.out, "release is pending-upgrade") || !strings.Contains(r.out, "] healthy") {
+		t.Fatalf("want to wait for the upgrade to finish, got %v pauses:\n%s", len(r.sleeps), r.out)
+	}
+}
+
+func TestHealthWaitIgnoresEventCountChanges(t *testing.T) {
+	c := recoveringCluster(t)
+	c.event("e1", "Warning", "Pod", "web-aaa", "BackOff", "Back-off restarting failed container", "2026-10-18T11:55:00Z", 3)
+	eventsGVR := schema.GroupVersionResource{Version: "v1", Resource: "events"}
+	r := runWait(t, c, func(n int, cl *Clients) {
+		doc := `apiVersion: v1
+kind: Event
+metadata: {name: %s, namespace: prod}
+type: Warning
+involvedObject: {kind: Pod, name: web-aaa, namespace: prod}
+reason: %s
+message: Back-off restarting failed container
+count: %d
+lastTimestamp: "2026-10-18T11:59:00Z"
+`
+		u := &unstructured.Unstructured{}
+		switch n {
+		case 1: // the same event happened again: not a change worth printing
+			if err := yaml.Unmarshal([]byte(fmt.Sprintf(doc, "e1", "BackOff", 9)), &u.Object); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := cl.Cluster.Dynamic.Resource(eventsGVR).Namespace("prod").Update(context.Background(), u, metav1.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+		case 2: // a new kind of event: print
+			if err := yaml.Unmarshal([]byte(fmt.Sprintf(doc, "e2", "Unhealthy", 1)), &u.Object); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := cl.Cluster.Dynamic.Resource(eventsGVR).Namespace("prod").Create(context.Background(), u, metav1.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}, "health", "web", "--wait", "--timeout", "6s", "--interval", "2s")
+	wantProblems(t, r.err, true)
+	if got := strings.Count(r.out, "Release prod/web"); got != 2 || !strings.Contains(r.out, "Unhealthy") {
+		t.Fatalf("want 2 snapshots (start and the new event), got %d:\n%s", got, r.out)
+	}
+}
+
+func TestHealthTimeoutAndIntervalNeedWait(t *testing.T) {
+	for _, flag := range []string{"--timeout", "--interval"} {
+		_, err := run(t, recoveringCluster(t), "prod", "health", "web", flag, "1m")
+		if err == nil || !strings.Contains(err.Error(), "--wait") || !strings.Contains(err.Error(), flag) {
+			t.Errorf("%s without --wait: want an error naming both flags, got %v", flag, err)
+		}
+	}
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -18,6 +19,9 @@ func (c *cluster) readLog(_ context.Context, ns, pod, container string, tail int
 	defer c.logMu.Unlock()
 	c.logCalls = append(c.logCalls, ns+"/"+key)
 	c.logTail = tail
+	if msg, ok := c.logErrors[key]; ok {
+		return "", errors.New(msg)
+	}
 	text, ok := c.logs[key]
 	if !ok {
 		return "", errors.New("no logs for " + key)
@@ -121,7 +125,7 @@ func TestHealthLogsSkipsNotReadyPodsOfHealthyWorkload(t *testing.T) {
 	}
 }
 
-// pod adds a pod from raw status YAML.
+// podWithStatus adds a pod from raw status YAML.
 func (c *cluster) podWithStatus(name, app, status string) {
 	c.t.Helper()
 	c.yaml(fmt.Sprintf(`apiVersion: v1
@@ -232,6 +236,10 @@ func TestSanitizeLog(t *testing.T) {
 		{"line of exactly the limit is kept", exact, []string{exact}},
 		{"one rune over the limit is cut", oneOver, []string{oneOver[:maxLogLine] + "…"}},
 		{"multibyte runes counted as runes", strings.Repeat("я", maxLogLine), []string{strings.Repeat("я", maxLogLine)}},
+		{"bidi override and zero width characters dropped", "a\u202eb\u200bc\u2066d", []string{"abcd"}},
+		{"dcs string body removed", "x\x1bPsecret\x1b\\y", []string{"xy"}},
+		{"apc string body removed", "x\x1b_apc\x1b\\y", []string{"xy"}},
+		{"unterminated string body ends at the line", "a\x1bPsecret\nnext", []string{"a", "next"}},
 		{"empty", "", nil},
 	}
 	for _, tt := range tests {
@@ -241,5 +249,75 @@ func TestSanitizeLog(t *testing.T) {
 				t.Fatalf("sanitizeLog(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHealthLogsTerminatedContainerReadsCurrentLog(t *testing.T) {
+	c := healthCluster(t)
+	c.deployment("web", 1, 1, 2, 2, 1, 1)
+	c.statefulSet("db", 1, 1, 1)
+	c.podWithStatus("web-aaa", "web", `  phase: Running
+  conditions: [{type: Ready, status: "False"}]
+  containerStatuses:
+  - {name: main, ready: false, restartCount: 2, state: {terminated: {exitCode: 1, reason: Error}}}
+`)
+	c.setLog("web-aaa/main", "just exited\n")
+	out, err := run(t, c, "prod", "health", "web", "--logs", "1")
+	wantProblems(t, err, true)
+	if len(c.logCalls) != 1 || c.logCalls[0] != "prod/web-aaa/main" || !strings.Contains(out, "just exited") {
+		t.Fatalf("want the log of the run that just exited, got %v:\n%s", c.logCalls, out)
+	}
+}
+
+func TestHealthLogsLimit(t *testing.T) {
+	_, err := run(t, logsCluster(t), "prod", "health", "web", "--logs", "1001")
+	if err == nil || !strings.Contains(err.Error(), "1000") {
+		t.Fatalf("want an error naming the limit, got %v", err)
+	}
+	if _, err := run(t, logsCluster(t), "prod", "health", "web", "--logs", "1000"); !errors.Is(err, ErrProblems) {
+		t.Fatalf("1000 lines must be accepted, got %v", err)
+	}
+}
+
+func TestHealthLogsDisabledWithoutReader(t *testing.T) {
+	c := logsCluster(t)
+	var out bytes.Buffer
+	o := NewOptions()
+	o.Out, o.ErrOut = &out, &bytes.Buffer{}
+	o.NewClients = func(*Options) (*Clients, error) {
+		cl := c.clients("prod")
+		cl.Logs = nil
+		return cl, nil
+	}
+	cmd := NewRootCommand(o)
+	cmd.SetArgs([]string{"health", "web", "--logs", "3"})
+	if err := cmd.ExecuteContext(context.Background()); !errors.Is(err, ErrProblems) {
+		t.Fatalf("want ErrProblems, got %v", err)
+	}
+	if strings.Contains(out.String(), "Logs of") {
+		t.Fatalf("no reader, no logs:\n%s", out.String())
+	}
+}
+
+func TestHealthLogsErrorTextIsSanitized(t *testing.T) {
+	c := logsCluster(t)
+	delete(c.logs, "web-aaa/main!previous")
+	c.logErrors = map[string]string{"web-aaa/main!previous": "\x1b[2Jcleared \u202eevil"}
+	out, err := run(t, c, "prod", "health", "web", "--logs", "1")
+	wantProblems(t, err, true)
+	if strings.ContainsRune(out, '\x1b') || strings.ContainsRune(out, '\u202e') || !strings.Contains(out, "cleared evil") {
+		t.Fatalf("error text must be sanitized:\n%q", out)
+	}
+}
+
+func TestHealthEventMessageIsSanitized(t *testing.T) {
+	c := healthCluster(t)
+	c.deployment("web", 1, 1, 2, 2, 1, 1)
+	c.statefulSet("db", 1, 1, 1)
+	c.event("e1", "Warning", "Deployment", "web", "FailedCreate", "\x1b]0;pwned\x07quota \u202eexceeded", "2026-10-18T11:55:00Z", 1)
+	out, err := run(t, c, "prod", "health", "web")
+	wantProblems(t, err, true)
+	if strings.ContainsRune(out, '\x1b') || strings.ContainsRune(out, '\u202e') || !strings.Contains(out, "quota exceeded") {
+		t.Fatalf("event message must be sanitized:\n%q", out)
 	}
 }
