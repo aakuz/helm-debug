@@ -41,6 +41,16 @@ document is reduced to apiVersion/kind/namespace/name. The REST mapper decides t
 namespaced object with no namespace gets the release namespace, and a cluster-scoped object drops
 any namespace. Kinds the cluster doesn't know (removed CRDs) are reported as `unknown-kind`.
 
+## Drift
+
+`drift` reads the latest release manifest and fetches each declared object, excluding hooks.
+It reports missing objects and sorted JSON pointers to declared fields that changed or disappeared.
+The comparison ignores status and server-managed metadata, and converts Secret stringData to data.
+It recursively compares declared map keys, ignoring live-only keys so API defaults and controller
+additions do not create noise. This also means live-only additions are not detected. Lists are
+compared in order and by length. No values are included in output, so Secret values stay private.
+Unknown kinds and failed GETs return execution errors rather than an in-sync verdict.
+
 ## Ownership
 
 Helm adopts and updates an existing object only if it has:

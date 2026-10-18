@@ -80,11 +80,12 @@ func (c *Cluster) ResolveArg(arg string) (Resolved, error) {
 
 // Live describes the live state of an object.
 type Live struct {
-	Status           string `json:"status"`
-	Error            string `json:"error,omitempty"`
-	ReleaseName      string `json:"releaseName,omitempty"`
-	ReleaseNamespace string `json:"releaseNamespace,omitempty"`
-	ManagedBy        string `json:"managedBy,omitempty"`
+	Object           *unstructured.Unstructured `json:"-"`
+	Status           string                     `json:"status"`
+	Error            string                     `json:"error,omitempty"`
+	ReleaseName      string                     `json:"releaseName,omitempty"`
+	ReleaseNamespace string                     `json:"releaseNamespace,omitempty"`
+	ManagedBy        string                     `json:"managedBy,omitempty"`
 }
 
 // Get fetches an object and extracts its Helm ownership metadata.
@@ -107,6 +108,7 @@ func liveFrom(obj *unstructured.Unstructured) Live {
 	ann := obj.GetAnnotations()
 	return Live{
 		Status:           StatusPresent,
+		Object:           obj,
 		ReleaseName:      ann[AnnotationReleaseName],
 		ReleaseNamespace: ann[AnnotationReleaseNamespace],
 		ManagedBy:        obj.GetLabels()[LabelManagedBy],

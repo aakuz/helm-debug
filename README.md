@@ -5,6 +5,7 @@ Debug Helm releases by reading their records straight from the cluster storage
 
 - **`resources`** – which objects a release revision declares (hooks included), whether they exist
   and whether they carry the ownership metadata Helm needs to manage them.
+- **`drift`** – which declared fields differ between the latest stored manifest and live objects.
 - **`find`** – which release(s) declare a given object.
 - **`history`** – revisions with status, chart/app version and the stored failure reason.
 - **`stuck`** – releases stuck in `pending-install/upgrade/rollback` and the command that unlocks them.
@@ -95,6 +96,31 @@ Suggested fixes (let Helm adopt the objects):
 `--revision N` inspects an older revision. Hooks are listed, but their absence is not treated as a
 problem because hooks are usually deleted by their delete policy.
 
+### drift
+
+```console
+$ helm-debug drift backend -n prod
+Release prod/backend revision 2
+
+KIND        NAMESPACE  NAME     STATUS   CHANGED FIELDS
+Deployment  prod       backend  drifted  /spec/replicas
+```
+
+Compares the latest stored manifest with live objects using read-only GET requests. Missing
+objects and changed or removed declared fields count as drift. Changed fields are reported as
+JSON pointers; values are never printed, including Secret values. `-o json` and `-o yaml` expose
+the same resource statuses and changed paths.
+
+Status and server-managed metadata (such as `managedFields`, `resourceVersion`, UID and timestamps)
+are ignored. Fields present only on live objects are ignored to avoid reporting API defaults and
+controller additions. Consequently, additions outside the declared fields are not detected. Lists
+are compared in order, including their length; list reordering can be reported as drift. Secret
+`stringData` is compared against its stored `data` representation. Hooks are excluded because Helm
+commonly deletes them after execution. This compares stored intent, not a newly rendered chart.
+
+Exit code is 0 when in sync, 2 for drift, and 1 for lookup or manifest errors (including unknown
+kinds). An execution error takes precedence over drift when both occur.
+
 ### find
 
 ```console
@@ -138,13 +164,14 @@ may still be in progress.
 |---|---|
 | 0 | No problems |
 | 1 | Execution error (no access, release not found, bad flags, …) |
-| 2 | Problems found: absent object or broken ownership (`resources`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`) |
+| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`) |
 
 ## RBAC
 
 | Command | Needs |
 |---|---|
 | `resources` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on every declared object |
+| `drift` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on every declared object |
 | `history` | `list` on secrets (or configmaps) in the release namespace |
 | `find` | `get` on the object; `list` + `get` on secrets (or configmaps) cluster-wide for the scan |
 | `stuck` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
