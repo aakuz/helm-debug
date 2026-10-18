@@ -1,0 +1,9 @@
+Live object prod/Service/backend: present
+Scanned 2 release record(s)
+
+RELEASE NAMESPACE  RELEASE  REVISION  STATUS    UPDATED              OBJECT NAMESPACE  HOOK
+prod               backend  2         deployed  2026-10-18 04:00:00  prod              -
+staging            legacy   4         deployed  2026-10-18 06:00:00  prod              -
+
+warning: object is declared by 2 releases (prod/backend, staging/legacy); only one of them can own it
+warning: live object has no meta.helm.sh/release-* annotations; Helm will refuse to adopt it (see `resources` for fix commands)

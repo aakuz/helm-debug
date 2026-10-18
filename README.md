@@ -1,197 +1,166 @@
-# Helm Resources Tools
+# helm-debug
 
-A collection of CLI utilities for working with Helm releases directly via Kubernetes Secrets, without requiring the Helm CLI.
+Debug Helm releases by reading their records straight from the cluster storage
+(the `sh.helm.release.v1.*` Secrets or ConfigMaps), without running Helm operations.
 
-## Tools
+- **`resources`** – which objects a release revision declares (hooks included), whether they exist
+  and whether they carry the ownership metadata Helm needs to manage them.
+- **`find`** – which release(s) declare a given object.
+- **`history`** – revisions with status, chart/app version and the stored failure reason.
+- **`stuck`** – releases stuck in `pending-install/upgrade/rollback` and the command that unlocks them.
 
-### 1. **helm-resources-checker.py** – Release Resource Checker
-Inspects a specific Helm release and lists all resources rendered by that release revision, highlighting whether each resource currently exists in the cluster.
+The tool is strictly read-only. When it finds a problem it prints the `kubectl`/`helm` command
+that fixes it, but never runs it.
 
-```
-✓ exists  – green
-✗ absent  – red
-```
+It works on Linux, macOS and Windows and can be run three ways:
 
-### 2. **helm-resource-finder.py** – Resource Finder (NEW)
-Searches for a specific Kubernetes resource across **all** Helm releases in the cluster to determine which release(s) manage it.
+| Invocation | Binary |
+|---|---|
+| `helm-debug …` | `helm-debug` |
+| `kubectl helm-debug …` | `kubectl-helm_debug` on `PATH` |
+| `helm debug …` | Helm plugin |
 
----
+> Releases deployed by ArgoCD are rendered with `helm template` and have no release records,
+> so there is nothing for this tool to read. It targets releases installed by the Helm CLI or
+> Flux helm-controller.
 
-## Features
+## Install
 
-### helm-resources-checker.py
-* **Revision aware** – query the latest revision or any specific `--revision` you need.
-* **Cluster‑scoped & namespaced** resources are both detected.
-* **Robust decoding** – handles the single‑ or double‑base64 + gzip formats used by different Helm versions/plugins.
-* **No cluster‑wide list calls** – works only with the release Secret and targeted GETs, so it's friendly to restricted RBAC environments.
-* **Colour output** – clearly see which objects are missing.
+### Binaries
 
-### helm-resource-finder.py
-* **Cross-release search** – scans all Helm releases across all namespaces to find where a resource is defined.
-* **Flexible filtering** – search by kind, name, and optionally namespace.
-* **Revision history** – shows all revisions where the resource appears.
-* **Detailed output** – displays release status, timestamps, labels, and annotations.
-* **Robust decoding** – handles multiple Helm encoding formats including double base64, gzip, zlib, and bz2.
-* **Statistics** – reports on successful/failed decodes to help diagnose issues.
+Download the archive for your platform from the
+[latest release](https://github.com/aakuz/helm-debug/releases/latest). It contains both
+`helm-debug` and `kubectl-helm_debug` (`.exe` on Windows). Put them on your `PATH`.
 
----
-
-## Installation
+From source (Go 1.27+):
 
 ```bash
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+go install github.com/aakuz/helm-debug/cmd/helm-debug@latest
 ```
 
-Both scripts rely on your default kube‑config _or_ in‑cluster service account credentials, exactly like `kubectl`.
+To also use it as a kubectl plugin, copy or link the same binary as `kubectl-helm_debug`.
 
----
+### Helm plugin
+
+Pick the tarball for your OS and architecture (`linux|darwin|windows` × `amd64|arm64`):
+
+```bash
+# Helm 4 (plugins are not signed yet, so verification has to be skipped)
+helm plugin install --verify=false \
+  https://github.com/aakuz/helm-debug/releases/latest/download/helm-debug-plugin-darwin-arm64.tgz
+
+# Helm 3
+helm plugin install \
+  https://github.com/aakuz/helm-debug/releases/latest/download/helm-debug-plugin-linux-amd64.tgz
+```
+
+Remove with `helm plugin uninstall debug`.
 
 ## Usage
 
-### helm-resources-checker.py
+All commands accept the usual kubectl flags (`--context`, `--kubeconfig`, `-n`, …) plus:
 
-Check which resources from a Helm release currently exist in the cluster:
+| Flag | Meaning |
+|---|---|
+| `-o, --output table\|json\|yaml` | Output format (default `table`) |
+| `--storage secret\|configmap` | Helm storage driver (default `$HELM_DRIVER`, else `secret`) |
+| `--concurrency N` | Parallel API requests (default 8) |
+| `-v, --verbose` | Debug logging to stderr (also `HELM_DEBUG=true`) |
 
-```bash
-python helm-resources-checker.py \
-  --name       <release>     \
-  --namespace  <namespace>   \
-  [--revision <N>]
+When run as `helm debug`, Helm passes its global flags (`-n`, `--kube-context`, `--kubeconfig`,
+`--kube-token`, …) through `HELM_*` environment variables. `helm-debug` picks them up as defaults
+in every mode, and explicit flags take precedence.
+
+### resources
+
+```console
+$ helm-debug resources backend -n prod
+Release prod/backend revision 2 (deployed)
+
+KIND         NAMESPACE  NAME             HOOK         STATUS        OWNERSHIP
+ClusterRole  -          backend-reader   -            present       ok
+ConfigMap    shared     backend-config   -            present       mismatch (prod/frontend managed-by=Helm)
+Deployment   prod       backend          -            present       ok
+Service      prod       backend          -            present       missing
+Widget       -          backend-widget   -            unknown-kind  -
+Job          prod       backend-migrate  pre-upgrade  absent        -
+
+error: Widget/backend-widget: no matches for kind "Widget" in version "example.com/v1"
+
+Suggested fixes (let Helm adopt the objects):
+  kubectl -n shared annotate ConfigMap/backend-config meta.helm.sh/release-name=backend meta.helm.sh/release-namespace=prod --overwrite
+  …
 ```
 
-Examples:
+`--revision N` inspects an older revision. Hooks are listed, but their absence is not treated as a
+problem because hooks are usually deleted by their delete policy.
 
-* Inspect **latest** revision of release `backend` in namespace `prod`:
+### find
 
-  ```bash
-  python helm-resources-checker.py --name backend --namespace prod
-  ```
+```console
+$ helm-debug find deployment/backend -n prod
+Live object prod/Deployment/backend: present, annotated with release prod/backend
 
-* Inspect **revision 12** of release `flux-ui` in namespace `flux-system`:
-
-  ```bash
-  python helm-resources-checker.py --name flux-ui --namespace flux-system --revision 12
-  ```
-
-_Output sample:_
-
-```
-Resources in Helm release 'flux-ui' revision 12 (namespace flux-system):
------------------------------------------------------------------------
-Deployment                flux-system/flux-ui            -> ✓ exists
-ClusterRole               flux-ui                        -> ✓ exists
-ServiceAccount            flux-system/flux-ui            -> ✗ absent
-...
+RELEASE NAMESPACE  RELEASE  REVISION  STATUS    UPDATED              OBJECT NAMESPACE  HOOK
+prod               backend  2         deployed  2026-10-18 04:00:00  prod              -
 ```
 
----
+The command first reads the `meta.helm.sh/release-*` annotations of the live object and checks
+that the annotated release really declares it. If that gives no answer, it scans release records
+in all namespaces: object metadata is listed page by page, and only the latest revision of each
+release is decoded, unless you pass `--all-revisions`. `KIND` accepts kinds, plurals and short
+names (`deploy`, `svc`, `cm`). `-A` matches the object in any namespace.
 
-### helm-resource-finder.py
+### history
 
-Find which Helm release(s) manage a specific Kubernetes resource:
-
-```bash
-python helm-resource-finder.py \
-  --kind      <kind>      \
-  --name      <name>      \
-  [--namespace <ns>]
+```console
+$ helm-debug history backend -n prod
+REVISION  UPDATED              STATUS      CHART          APP VERSION  DESCRIPTION
+3         2026-10-18 05:00:00  failed      backend-1.3.0  2.0          Upgrade "backend" failed: timed out waiting for the condition
+2         2026-10-18 04:00:00  deployed    backend-1.2.0  2.0          -
 ```
 
-**Command-line options:**
-* `-k, --kind` – Kubernetes resource kind (e.g., Deployment, Service, ConfigMap) [required]
-* `-n, --name` – Name of the resource to search for [required]
-* `-ns, --namespace` – Namespace to filter the search (optional, searches all if not specified)
-* `-v, --verbose` – Enable verbose output
+### stuck
 
-Examples:
-
-* Find which release manages a Deployment named `nginx-deployment`:
-
-  ```bash
-  python helm-resource-finder.py --kind Deployment --name nginx-deployment
-  ```
-
-* Find a Service named `api-service` in the `production` namespace:
-
-  ```bash
-  python helm-resource-finder.py --kind Service --name api-service --namespace production
-  ```
-
-* Short form options:
-
-  ```bash
-  python helm-resource-finder.py -k ConfigMap -n redis-config -ns storage
-  ```
-
-_Output sample:_
-
-```
-🔍 Searching for deployment/nginx-deployment across all namespaces
-------------------------------------------------------------
-Fetching Helm release secrets from cluster...
-Found 45 Helm release secret(s)
-
-Processing 15 unique Helm release(s)...
-Searching in release 'backend'...
-  ✓ Found in backend revision 8 (status: deployed)
-
-============================================================
-SEARCH RESULTS
-============================================================
-
-✅ Resource deployment/nginx-deployment FOUND in 1 location(s):
-
-📦 Release: backend (namespace: production)
-   └─ 🟢 Revision 8 (status: deployed)
-      • Updated: 2025-11-10 14:32:15
-      • Resource namespace: production
-      • Labels: app=nginx, env=prod
-
-============================================================
-STATISTICS
-------------------------------------------------------------
-Total Helm secrets found: 45
-Successfully decoded: 45
-============================================================
+```console
+$ helm-debug stuck -A
+NAMESPACE  RELEASE  REVISION  STATUS           AGE  FIX
+dev        fresh    1         pending-install  9h   helm uninstall fresh -n dev
+prod       backend  3         pending-upgrade  7h   helm rollback backend 2 -n prod
 ```
 
----
+Releases that became pending less than `--older-than` ago (default `5m`) are skipped, because they
+may still be in progress.
 
 ## Exit codes
 
-| Code | Meaning                                  |
-|------|-------------------------------------------|
-| 0    | Success                                   |
-| 1    | Secret or revision not found / other error|
+| Code | Meaning |
+|---|---|
+| 0 | No problems |
+| 1 | Execution error (no access, release not found, bad flags, …) |
+| 2 | Problems found: absent object or broken ownership (`resources`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`) |
 
----
+## RBAC
 
-## Notes
+| Command | Needs |
+|---|---|
+| `resources` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on every declared object |
+| `history` | `list` on secrets (or configmaps) in the release namespace |
+| `find` | `get` on the object; `list` + `get` on secrets (or configmaps) cluster-wide for the scan |
+| `stuck` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
 
-* Both scripts use **ANSI escape codes** and emojis for visual output; if you pipe the output, colours might disappear (depending on your terminal). For CI environments without TTY support you can temporarily remove the colour codes.
-* **RBAC requirements:**
-  * **helm-resources-checker.py**: needs permission to **get** `secrets` in the release namespace _and_ **get** each listed resource to check its existence.
-  * **helm-resource-finder.py**: requires permission to **list** `secrets` across all namespaces with label `owner=helm`.
+## Development
 
----
+```bash
+make build          # bin/helm-debug and bin/kubectl-helm_debug
+make test           # unit tests with fake clients and golden files
+make update-golden  # rewrite testdata/*.golden after intended output changes
+make lint           # golangci-lint
+make e2e            # kind cluster + real helm releases (needs docker, kind, kubectl, helm)
+```
 
-## Use Cases
-
-### helm-resources-checker.py
-Use this when you:
-- Want to verify which resources from a specific Helm release are still present in the cluster
-- Need to troubleshoot a release that may have partially failed or been partially deleted
-- Want to audit the current state vs. declared state of a specific release
-
-### helm-resource-finder.py
-Use this when you:
-- Found a resource in the cluster and want to know which Helm release manages it
-- Need to track down the origin of a specific Deployment, Service, ConfigMap, etc.
-- Want to see all revisions of a release that included a particular resource
-- Are investigating resource ownership and management
-
----
+Design notes live in [docs/DESIGN.md](docs/DESIGN.md), decisions in [docs/adr](docs/adr).
+Planned work is tracked in [issues labelled `roadmap`](https://github.com/aakuz/helm-debug/issues?q=label%3Aroadmap).
 
 ## License
 

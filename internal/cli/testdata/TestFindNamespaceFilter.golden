@@ -1,0 +1,4 @@
+Live object staging/Service/backend: absent
+Scanned 1 release record(s)
+
+staging/Service/backend is not declared by any Helm release

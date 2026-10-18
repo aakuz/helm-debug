@@ -1,0 +1,4 @@
+Release prod/api revision 1 (deployed)
+
+KIND        NAMESPACE  NAME  HOOK  STATUS   OWNERSHIP
+Deployment  prod       api   -     present  ok

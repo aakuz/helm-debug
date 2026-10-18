@@ -1,0 +1,12 @@
+kind: Widget
+matches:
+- release: backend
+  releaseNamespace: prod
+  resourceNamespace: prod
+  revision: 2
+  status: deployed
+  updated: "2026-10-18T04:00:00Z"
+name: backend-widget
+namespace: prod
+scanned: 1
+source: scan

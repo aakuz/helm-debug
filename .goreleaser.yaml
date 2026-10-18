@@ -1,0 +1,52 @@
+version: 2
+
+before:
+  hooks:
+    - ./scripts/plugin-yaml.sh {{ .Version }}
+
+builds:
+  - &build
+    id: helm-debug
+    main: ./cmd/helm-debug
+    binary: helm-debug
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/aakuz/helm-debug/internal/cli.Version={{ .Version }}
+  - <<: *build
+    id: kubectl-plugin
+    binary: kubectl-helm_debug
+
+archives:
+  - id: cli
+    ids: [helm-debug, kubectl-plugin]
+    name_template: "helm-debug_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [README.md]
+  # Stable names so README can link to releases/latest/download/...
+  - id: helm-plugin
+    ids: [helm-debug]
+    name_template: "helm-debug-plugin-{{ .Os }}-{{ .Arch }}"
+    formats: [tgz]
+    wrap_in_directory: debug
+    files:
+      - src: build/plugin.yaml
+        strip_parent: true
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^ci:"]
+
+release:
+  github:
+    owner: aakuz
+    name: helm-debug
