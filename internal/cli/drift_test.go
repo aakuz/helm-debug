@@ -193,3 +193,72 @@ rules:
 		t.Fatalf("unexpected report: %s", out)
 	}
 }
+
+func TestDriftAddedPayloadKey(t *testing.T) {
+	for _, kind := range []string{"ConfigMap", "Secret"} {
+		t.Run(kind, func(t *testing.T) {
+			c := newCluster(t)
+			c.release("api", "prod", 1, common.StatusDeployed, "apiVersion: v1\nkind: "+kind+"\nmetadata:\n  name: settings\ndata:\n  original: dmFsdWU=\n")
+			c.live = append(c.live, &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "v1", "kind": kind,
+				"metadata": map[string]any{"name": "settings", "namespace": "prod"},
+				"data":     map[string]any{"original": "dmFsdWU=", "added": "bWFudWFs"},
+			}})
+			out, err := run(t, c, "prod", "drift", "api", "-o", "json")
+			wantProblems(t, err, true)
+			if !strings.Contains(out, "/data/added") {
+				t.Fatalf("unexpected report: %s", out)
+			}
+		})
+	}
+}
+
+func TestDriftEquivalentResourceQuantities(t *testing.T) {
+	c := newCluster(t)
+	const manifest = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  template:
+    spec:
+      containers:
+      - name: api
+        image: api:v1
+        resources:
+          requests:
+            cpu: "0.1"
+            memory: 1024Mi
+`
+	c.release("api", "prod", 1, common.StatusDeployed, manifest)
+	liveJSON, err := yaml.YAMLToJSON([]byte(strings.ReplaceAll(strings.ReplaceAll(manifest, `"0.1"`, "100m"), "1024Mi", "1Gi")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := &unstructured.Unstructured{}
+	if err := live.UnmarshalJSON(liveJSON); err != nil {
+		t.Fatal(err)
+	}
+	live.SetNamespace("prod")
+	c.live = append(c.live, live)
+	out, err := run(t, c, "prod", "drift", "api")
+	wantProblems(t, err, false)
+	if !strings.Contains(out, "in-sync") {
+		t.Fatalf("unexpected report: %s", out)
+	}
+}
+
+func TestDriftQuantityLikeApplicationStrings(t *testing.T) {
+	c := newCluster(t)
+	c.release("api", "prod", 1, common.StatusDeployed, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: settings\ndata:\n  value: \"0.1\"\n")
+	c.live = append(c.live, &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1", "kind": "ConfigMap",
+		"metadata": map[string]any{"name": "settings", "namespace": "prod"},
+		"data":     map[string]any{"value": "100m"},
+	}})
+	out, err := run(t, c, "prod", "drift", "api", "-o", "json")
+	wantProblems(t, err, true)
+	if !strings.Contains(out, "/data/value") {
+		t.Fatalf("unexpected report: %s", out)
+	}
+}

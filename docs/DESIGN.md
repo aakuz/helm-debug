@@ -47,7 +47,9 @@ any namespace. Kinds the cluster doesn't know (removed CRDs) are reported as `un
 It reports missing objects and sorted JSON pointers to declared fields that changed or disappeared.
 The comparison ignores status and server-managed metadata, and converts Secret stringData to data.
 It recursively compares declared map keys, ignoring live-only keys so API defaults and controller
-additions do not create noise. This also means live-only additions are not detected. Lists are
+additions do not create noise. ConfigMap/Secret payload maps are compared in full so added data
+keys are detected; other live-only additions are not detected. Known built-in resource quantity
+fields use Kubernetes quantity comparison to avoid false drift from canonicalization. Lists are
 compared in order and by length. No values are included in output, so Secret values stay private.
 Unknown kinds and failed GETs return execution errors rather than an in-sync verdict.
 

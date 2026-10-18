@@ -113,7 +113,10 @@ the same resource statuses and changed paths.
 
 Status and server-managed metadata (such as `managedFields`, `resourceVersion`, UID and timestamps)
 are ignored. Fields present only on live objects are ignored to avoid reporting API defaults and
-controller additions. Consequently, additions outside the declared fields are not detected. Lists
+controller additions. ConfigMap/Secret payload maps (`data` and ConfigMap `binaryData`) are compared in full, including
+added keys. Other additions outside the declared fields are not detected. Kubernetes resource
+quantities in standard workload and storage fields are compared by value (for example, `100m`
+CPU equals `0.1`). Lists
 are compared in order, including their length; list reordering can be reported as drift. Secret
 `stringData` is compared against its stored `data` representation. Hooks are excluded because Helm
 commonly deletes them after execution. This compares stored intent, not a newly rendered chart.
