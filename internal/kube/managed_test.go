@@ -59,7 +59,7 @@ func TestListHelmManaged(t *testing.T) {
 		partial("v1", "ConfigMap", "prod", "plain", nil, a),
 	)
 
-	got, warnings, err := c.ListHelmManaged(context.Background(), "prod")
+	got, warnings, err := c.ListHelmManaged(context.Background(), "prod", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestListHelmManaged(t *testing.T) {
 		t.Fatalf("ListHelmManaged(prod) = %+v, want %+v", got, want)
 	}
 
-	all, _, err := c.ListHelmManaged(context.Background(), "")
+	all, _, err := c.ListHelmManaged(context.Background(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestListHelmManagedWarnsWhenKindCannotBeListed(t *testing.T) {
 		return true, nil, context.DeadlineExceeded
 	})
 
-	got, warnings, err := c.ListHelmManaged(context.Background(), "prod")
+	got, warnings, err := c.ListHelmManaged(context.Background(), "prod", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,5 +100,25 @@ func TestListHelmManagedWarnsWhenKindCannotBeListed(t *testing.T) {
 	}
 	if len(warnings) != 1 {
 		t.Fatalf("got warnings %v, want one about services", warnings)
+	}
+}
+
+func TestListHelmManagedReportsProgress(t *testing.T) {
+	c := newManagedCluster(t)
+	type step struct {
+		done, total int
+		resource    string
+	}
+	var got []step
+	_, _, err := c.ListHelmManaged(context.Background(), "", func(done, total int, resource string) {
+		got = append(got, step{done, total, resource})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// subresources and kinds that cannot be listed are not counted
+	want := []step{{1, 3, "configmaps"}, {2, 3, "services"}, {3, 3, "clusterroles"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("progress = %+v, want %+v", got, want)
 	}
 }

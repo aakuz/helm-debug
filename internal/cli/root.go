@@ -57,6 +57,8 @@ type Options struct {
 	NewClients func(o *Options) (*Clients, error)
 	// Color forces colored output on or off; nil means auto-detect.
 	Color *bool
+	// Progress forces the progress line on stderr on or off; nil means show it when stderr is a terminal.
+	Progress *bool
 }
 
 // NewOptions returns options with defaults taken from the environment.

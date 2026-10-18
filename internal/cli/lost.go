@@ -61,7 +61,9 @@ Exits with code 2 when lost resources are found.`,
 				byNamespacedName[r.Namespace+"/"+r.Release] = true
 				byName[r.Release] = true
 			}
-			objs, warnings, err := c.Cluster.ListHelmManaged(cmd.Context(), ns)
+			progress, clear := o.progressFunc("resource kinds")
+			objs, warnings, err := c.Cluster.ListHelmManaged(cmd.Context(), ns, progress)
+			clear()
 			if err != nil {
 				return err
 			}

@@ -255,6 +255,10 @@ are always checked; namespaced kinds in the current namespace, or everywhere wit
 without the release annotation are skipped, since the release they belong to cannot be named.
 Kinds that cannot be listed (for example for lack of permissions) are reported as warnings.
 
+The scan makes one request per resource kind, so in a terminal it shows a `Scanning N/M resource kinds`
+status line on stderr. The line is erased when the scan ends and is not printed when stderr is
+redirected.
+
 ### health
 
 ```console

@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -92,5 +94,39 @@ func TestLostFoundReleaseNamespaceDefaultsToObjectNamespace(t *testing.T) {
 	wantProblems(t, err, true)
 	if strings.Contains(out, "kept") || strings.Join(strings.Fields(out), " ") != "RELEASE NAMESPACE RELEASE KIND NAMESPACE NAME prod gone ConfigMap prod lost" {
 		t.Fatalf("unexpected output:\n%s", out)
+	}
+}
+
+func runLostFoundProgress(t *testing.T, progress bool) (stdout, stderr string) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	o := NewOptions()
+	o.Out, o.ErrOut, o.Progress = &out, &errOut, &progress
+	c := lostCluster(t)
+	o.NewClients = func(*Options) (*Clients, error) { return c.clients("prod"), nil }
+	cmd := NewRootCommand(o)
+	cmd.SetArgs([]string{"lost-found", "-o", "json"})
+	if err := cmd.Execute(); !errors.Is(err, ErrProblems) {
+		t.Fatal(err)
+	}
+	return out.String(), errOut.String()
+}
+
+func TestLostFoundShowsProgress(t *testing.T) {
+	stdout, stderr := runLostFoundProgress(t, true)
+	if !strings.Contains(stderr, "Scanning 6/6 resource kinds") {
+		t.Fatalf("progress missing on stderr: %q", stderr)
+	}
+	if !strings.HasSuffix(stderr, "\r\033[K") {
+		t.Fatalf("progress line not erased at the end: %q", stderr)
+	}
+	if strings.Contains(stdout, "Scanning") {
+		t.Fatalf("progress leaked into stdout: %q", stdout)
+	}
+}
+
+func TestLostFoundNoProgressWhenDisabled(t *testing.T) {
+	if _, stderr := runLostFoundProgress(t, false); stderr != "" {
+		t.Fatalf("unexpected stderr output: %q", stderr)
 	}
 }

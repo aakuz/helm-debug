@@ -55,6 +55,31 @@ func (o *Options) colorEnabled() bool {
 	return ok && term.IsTerminal(int(f.Fd()))
 }
 
+func (o *Options) progressEnabled() bool {
+	if o.Progress != nil {
+		return *o.Progress
+	}
+	f, ok := o.ErrOut.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
+}
+
+// progressFunc returns a callback that rewrites one status line on stderr, or nil when progress is off.
+// The returned done function erases the line.
+func (o *Options) progressFunc(what string) (progress func(done, total int, item string), done func()) {
+	if !o.progressEnabled() {
+		return nil, func() {}
+	}
+	shown := false
+	return func(d, total int, item string) {
+			shown = true
+			fmt.Fprintf(o.ErrOut, "\r\033[KScanning %d/%d %s (%s)", d, total, what, item)
+		}, func() {
+			if shown {
+				fmt.Fprint(o.ErrOut, "\r\033[K")
+			}
+		}
+}
+
 func (o *Options) paint(s, color string) string {
 	if color == "" || !o.colorEnabled() {
 		return s
