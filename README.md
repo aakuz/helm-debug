@@ -287,50 +287,59 @@ Within one snapshot the output comes in this order: the release line, the worklo
 problems, the warning events and, last, the logs, which are the longest part.
 
 `--logs N` (default `0`, off) adds the last N log lines of the containers that explain a problem, and
-`--all-logs M` (default `0`, off) adds the last M lines of every started container of every pod, healthy
-pods included. N and M must be between 0 and 1000, otherwise the command fails. The two are independent
-and can be combined: the container that explains a problem in a pod that needs attention (listed under
-"Pods with problems", or not Ready in an unhealthy workload) gets N lines, and every other started
-container gets M lines. With `--all-logs` alone, the pods that need attention get M lines too; with
-`--logs` alone, only the pods that need attention are read. Logs are read through the `pods/log`
-subresource, a read-only GET capped at 1 MiB per container, one pod at a time per workload, so both
-flags need the same `get` on `pods/log`. A container that has restarted and is currently waiting (for example `CrashLoopBackOff`) shows the log of its previous
-run; a container that is running or has just exited shows its current log. Containers that never
-started (`ImagePullBackOff`, `ErrImagePull`, `InvalidImageName`, `CreateContainerConfigError`) have no
-log and are skipped. Each log is printed under `Logs of POD (container NAME[, previous run]):`, indented
-by two spaces. A failed log request prints `warning: unavailable: <error>` and does not change the exit
-code. Log lines are untrusted container output: terminal escape sequences (CSI, OSC, DCS, SOS, PM and APC
-strings) and control characters (except tab) are removed, Unicode format characters (bidi overrides,
-zero-width characters) are removed, invalid UTF-8 is replaced, and lines longer than 500 characters are
-cut with an ellipsis. The same cleaning applies to log read error texts and to warning event reasons and
-messages. In `-o json` and `-o yaml` the logs are a `logs` array per workload (`pod`, `container`,
-`previous`, `lines`, `error`), and problem pods gain a `container` field.
+`--all-logs M` (default `0`, off) adds the last M lines of every started container of every pod, init
+containers included, healthy pods included. N and M must be between 0 and 1000, otherwise the command
+fails. The two are independent and can be combined: the container that explains a problem in a pod that
+needs attention (listed under "Pods with problems", or not Ready in an unhealthy workload) gets N lines,
+and every other started container gets M lines. With `--all-logs` alone, the pods that need attention get
+M lines too; with `--logs` alone, only the pods that need attention are read. Logs are read through the
+`pods/log` subresource, a read-only GET capped at 1 MiB per container, one pod at a time per workload, so
+both flags need the same `get` on `pods/log`. A container that has restarted and is currently waiting
+(for example `CrashLoopBackOff`) shows the log of its previous run; a container that is running or has
+just exited shows its current log. Containers that never started (`ImagePullBackOff`, `ErrImagePull`,
+`InvalidImageName`, `CreateContainerConfigError`) have no log and are skipped. Each log is printed under
+`Logs of POD (container NAME[, previous run]):`, indented by two spaces. A failed log request prints
+`warning: unavailable: <error>` and does not change the exit code. Log lines are untrusted container
+output: terminal escape sequences (CSI, OSC, DCS, SOS, PM and APC strings) and control characters (except
+tab) are removed, Unicode format characters (bidi overrides, zero-width characters) are removed, invalid
+UTF-8 is replaced, and lines longer than 500 characters are cut with an ellipsis. The same cleaning
+applies to log read error texts and to warning event reasons and messages. In `-o json` and `-o yaml` the
+logs are a `logs` array per workload (`pod`, `container`, `previous`, `lines`, `error`), and problem pods
+gain a `container` field.
 
-`--wait` (`-w`) polls until the release is healthy: the release status is not a problem status, every workload is
-rolled out and no pod is listed, which is the condition under which exit code 0 is returned without it.
-`--interval` (default `2s`) is the time between polls and `--timeout` (default `5m`) the total wait; both
-must be positive, and passing either without `--wait` is an error (`--timeout requires --wait`). In table
-mode the state is printed on the first poll and again whenever it changes: a status or count change, a
-restart count change, a new or changed problem pod, a new kind of warning event, or a changed log line when
-`--logs` or `--all-logs` is set. A repeat of a known warning event (higher count or newer time, same object, reason and
-message) does not print a new snapshot. Each print starts with a `[HH:MM:SS +ELAPSED] healthy|unhealthy`
-line, and polls without a change print nothing. On success the command exits 0. When the timeout passes
-first it prints `timed out after DURATION, the release is still unhealthy` and exits 2. Ctrl-C stops the
-command like any other tool (the shell reports 130). Errors reading the release record (unknown release,
-storage errors) abort the wait with exit 1; per-workload lookup errors are retried until the timeout. With
-`-o json` or `-o yaml` nothing is streamed; only the final snapshot is printed.
+`--wait` (`-w`) polls until the release is healthy: the release status is not a problem status, every
+workload is rolled out and no pod is listed, which is the condition under which exit code 0 is returned
+without it. `--interval` (default `2s`) is the time between polls and `--timeout` (default `5m`) the
+total wait; both must be positive, and passing either without `--wait` is an error (`--timeout requires
+--wait`). In table mode the state is printed on the first poll and again whenever it changes: a status or
+count change, a restart count change, a new or changed problem pod, a new kind of warning event, or a
+changed log line when `--logs` or `--all-logs` is set. A repeat of a known warning event (higher count or
+newer time, same object, reason and message) does not print a new snapshot. Each print starts with a
+`[HH:MM:SS +ELAPSED] healthy|unhealthy` line, and polls without a change print nothing. On success the
+command exits 0. When the timeout passes first it prints `timed out after DURATION, the release is still
+unhealthy` and exits 2. Ctrl-C stops the command like any other tool (the shell reports 130). Errors
+reading the release record (unknown release, storage errors) abort the wait with exit 1; per-workload
+lookup errors are retried until the timeout. With `-o json` or `-o yaml` nothing is streamed; only the
+final snapshot is printed.
 
 `--tail` (with `--wait`, and with `--logs` or `--all-logs`; otherwise the command fails with `--tail requires
 --wait` or `--tail requires --logs or --all-logs`) follows the logs like `tail -f`. The first poll prints the
 logs in full. Later polls print only the log lines that were not shown before, under headings such as
-`Logs of POD (container NAME, previous run, new lines):`. A poll where only the logs changed prints just the
-`[HH:MM:SS +ELAPSED] healthy|unhealthy` line and the new lines, without repeating the table; a poll where the
-state changed prints the state without the logs, followed by the new lines; a poll with nothing new prints
-nothing. Without `--tail` every update repeats the whole tail. New lines are found by matching the end of the
-previously shown window with the start of the new one; when they do not overlap (the log moved on by more
-than the window, or the container restarted) the whole new window is printed. In tail mode a read error is
-shown once, and again only when its text changes. With `-o json` or `-o yaml`, `--tail` has no effect: the
-final snapshot carries the full tail.
+`Logs of POD (container NAME, previous run, new lines):`. A log stream is one run of one container of a pod,
+identified by namespace, pod, container, previous-run flag, container ID and restart count. Only a stream that
+continues a log already shown gets the `new lines` label. A restart starts a new stream, so its log is printed
+in full under a heading without `new lines`, even when it reads exactly like the log of the crashed run before
+(a deterministic crash loop). A stream that is absent from a poll (the pod was deleted or replaced) is
+forgotten, so a pod that comes back, even with the same name, is shown in full again. A poll where only the
+logs changed prints just the `[HH:MM:SS +ELAPSED] healthy|unhealthy` line and the new lines, without repeating
+the table; a poll where the state changed prints the state without the logs, followed by the new lines; a poll
+with nothing new prints nothing. Without `--tail` every update repeats the whole tail. New lines are found by
+matching the end of the previously shown window with the start of the new one; when they do not overlap, the
+whole new window is printed. Known limits: the match uses no timestamps, so identical lines cannot be told
+apart, and lines that repeat the old window exactly (for example a repeated heartbeat) can be hidden; when more
+lines arrive between two polls than the window holds (`--logs` or `--all-logs` N), the lines in between are not
+shown. In tail mode a read error is shown once, and again only when its text changes. With `-o json` or
+`-o yaml`, `--tail` has no effect: the final snapshot carries the full tail.
 
 ```console
 $ helm-debug health backend -n prod --wait --logs 5
