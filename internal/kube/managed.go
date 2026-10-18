@@ -49,20 +49,29 @@ func (c *Cluster) ListHelmManaged(ctx context.Context, namespace string) ([]Mana
 			if r.Namespaced {
 				ns = namespace
 			}
-			items, err := c.Metadata.Resource(gv.WithResource(r.Name)).Namespace(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
-			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("cannot list %s: %v", r.Name, err))
-				continue
-			}
-			for _, it := range items.Items {
-				name := it.Annotations[AnnotationReleaseName]
-				if name == "" {
-					continue
+			opts := metav1.ListOptions{LabelSelector: selector, Limit: 500}
+			for {
+				items, err := c.Metadata.Resource(gv.WithResource(r.Name)).Namespace(ns).List(ctx, opts)
+				if err != nil {
+					warnings = append(warnings, fmt.Sprintf("cannot list %s: %v", r.Name, err))
+					break
 				}
-				out = append(out, Managed{
-					Kind: r.Kind, Namespace: it.Namespace, Name: it.Name,
-					ReleaseName: name, ReleaseNamespace: it.Annotations[AnnotationReleaseNamespace],
-				})
+				for _, it := range items.Items {
+					name := it.Annotations[AnnotationReleaseName]
+					if name == "" {
+						continue
+					}
+					// Helm installs into the release namespace, so that is where an unannotated namespaced object belongs.
+					relNs := it.Annotations[AnnotationReleaseNamespace]
+					if relNs == "" {
+						relNs = it.Namespace
+					}
+					out = append(out, Managed{Kind: r.Kind, Namespace: it.Namespace, Name: it.Name, ReleaseName: name, ReleaseNamespace: relNs})
+				}
+				if items.Continue == "" {
+					break
+				}
+				opts.Continue = items.Continue
 			}
 		}
 	}

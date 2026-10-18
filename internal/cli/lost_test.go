@@ -6,6 +6,9 @@ import (
 	"testing"
 
 	"helm.sh/helm/v4/pkg/release/common"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"github.com/aakuz/helm-debug/internal/kube"
 )
 
 func lostCluster(t *testing.T) *cluster {
@@ -73,5 +76,21 @@ func TestLostFoundJSON(t *testing.T) {
 	}
 	if strings.Contains(out, "plain") || strings.Contains(out, "alive-cfg") {
 		t.Fatalf("object of a live release or without Helm metadata reported:\n%s", out)
+	}
+}
+
+func TestLostFoundReleaseNamespaceDefaultsToObjectNamespace(t *testing.T) {
+	c := newCluster(t)
+	c.release("alive", "prod", 1, common.StatusDeployed, simpleManifest)
+	c.object("v1", "ConfigMap", "prod", "kept", "alive", "")
+	c.object("v1", "ConfigMap", "prod", "lost", "gone", "")
+	for _, o := range c.live {
+		u := o.(*unstructured.Unstructured)
+		u.SetAnnotations(map[string]string{kube.AnnotationReleaseName: u.GetAnnotations()[kube.AnnotationReleaseName]})
+	}
+	out, err := run(t, c, "prod", "lost-found")
+	wantProblems(t, err, true)
+	if strings.Contains(out, "kept") || strings.Join(strings.Fields(out), " ") != "RELEASE NAMESPACE RELEASE KIND NAMESPACE NAME prod gone ConfigMap prod lost" {
+		t.Fatalf("unexpected output:\n%s", out)
 	}
 }

@@ -55,11 +55,11 @@ Exits with code 2 when lost resources are found.`,
 			if err != nil {
 				return err
 			}
-			known := map[string]bool{}
-			knownName := map[string]bool{}
+			byNamespacedName := map[string]bool{}
+			byName := map[string]bool{}
 			for _, r := range refs {
-				known[r.Namespace+"/"+r.Release] = true
-				knownName[r.Release] = true
+				byNamespacedName[r.Namespace+"/"+r.Release] = true
+				byName[r.Release] = true
 			}
 			objs, warnings, err := c.Cluster.ListHelmManaged(cmd.Context(), ns)
 			if err != nil {
@@ -68,8 +68,8 @@ Exits with code 2 when lost resources are found.`,
 			res := lostResult{Releases: []lostRelease{}, Warnings: warnings}
 			byRelease := map[string]int{}
 			for _, m := range objs {
-				// Without the namespace annotation only the name can be checked.
-				if m.ReleaseNamespace == "" && knownName[m.ReleaseName] || known[m.ReleaseNamespace+"/"+m.ReleaseName] {
+				// A cluster-scoped object without the namespace annotation can only be matched by name.
+				if (m.ReleaseNamespace == "" && byName[m.ReleaseName]) || byNamespacedName[m.ReleaseNamespace+"/"+m.ReleaseName] {
 					continue
 				}
 				key := m.ReleaseNamespace + "/" + m.ReleaseName
