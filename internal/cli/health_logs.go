@@ -15,26 +15,29 @@ import (
 type logTarget struct {
 	pod, container string
 	previous       bool
+	lines          int // how many lines to read
 }
 
-// logTargetsOf lists the containers whose logs to read for a pod: the one that explains a problem and,
-// with all set, every other started container too.
-func logTargetsOf(p corev1.Pod, problem *podHealth, workloadUnhealthy, all bool) []logTarget {
+// logTargetsOf lists the containers whose logs to read for a pod. The container that explains a problem
+// gets --logs lines (or --all-logs when --logs is off); with --all-logs every other started container
+// gets --all-logs lines.
+func logTargetsOf(p corev1.Pod, problem *podHealth, workloadUnhealthy bool, opts healthOptions) []logTarget {
 	var targets []logTarget
 	if t, ok := logTargetOf(p, problem, workloadUnhealthy); ok {
+		t.lines = cmp.Or(opts.logLines, opts.allLogs)
 		targets = append(targets, t)
 	}
-	if all {
+	if opts.allLogs > 0 {
 		for _, cs := range p.Status.ContainerStatuses {
 			if cs.State.Waiting != nil && cs.RestartCount == 0 {
 				continue // never started: no log
 			}
 			if !slices.ContainsFunc(targets, func(t logTarget) bool { return t.container == cs.Name }) {
-				targets = append(targets, logTarget{pod: p.Name, container: cs.Name, previous: cs.RestartCount > 0 && cs.State.Waiting != nil})
+				targets = append(targets, logTarget{pod: p.Name, container: cs.Name, previous: cs.RestartCount > 0 && cs.State.Waiting != nil, lines: opts.allLogs})
 			}
 		}
 	}
-	return targets
+	return slices.DeleteFunc(targets, func(t logTarget) bool { return t.lines == 0 })
 }
 
 // logTargetOf picks the container to read logs from: the failing container of a problem pod, or the
@@ -81,14 +84,14 @@ func podReady(p corev1.Pod) bool {
 
 // readLogs reads the targets one by one: workloads are already read in parallel, so this keeps the
 // number of simultaneous log requests within --concurrency.
-func readLogs(cmd *cobra.Command, c *Clients, namespace string, targets []logTarget, tail int) []podLog {
+func readLogs(cmd *cobra.Command, c *Clients, namespace string, targets []logTarget) []podLog {
 	slices.SortFunc(targets, func(a, b logTarget) int {
 		return cmp.Or(strings.Compare(a.pod, b.pod), strings.Compare(a.container, b.container))
 	})
 	logs := make([]podLog, len(targets))
 	for i, t := range targets {
 		logs[i] = podLog{Pod: t.pod, Container: t.container, Previous: t.previous}
-		text, err := c.Logs(cmd.Context(), namespace, t.pod, t.container, int64(tail), t.previous)
+		text, err := c.Logs(cmd.Context(), namespace, t.pod, t.container, int64(t.lines), t.previous)
 		if err != nil {
 			logs[i].Error = cleanLine(err.Error())
 			continue

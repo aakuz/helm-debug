@@ -58,6 +58,8 @@ type cluster struct {
 	logs     map[string]string
 	logCalls []string
 	logTail  int64
+	// logTails maps a log key to the number of lines asked for in its last request.
+	logTails map[string]int64
 	// logErrors maps a log key to an error text returned by the fake reader.
 	logErrors map[string]string
 	logMu     sync.Mutex

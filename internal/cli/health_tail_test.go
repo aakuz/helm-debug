@@ -63,13 +63,42 @@ func TestHealthAllLogsHealthyRelease(t *testing.T) {
 	}
 }
 
+func TestHealthLogsAndAllLogsAreIndependent(t *testing.T) {
+	// web-aaa (crashing) and web-ddd (not ready) need attention; web-ccc is a healthy replica
+	tests := []struct {
+		name string
+		args []string
+		want map[string]int64 // log key -> lines asked for
+	}{
+		{"both flags", []string{"--logs", "2", "--all-logs", "5"}, map[string]int64{"web-aaa/main!previous": 2, "web-ddd/main": 2, "web-ccc/main": 5}},
+		{"logs larger than all-logs", []string{"--logs", "9", "--all-logs", "1"}, map[string]int64{"web-aaa/main!previous": 9, "web-ddd/main": 9, "web-ccc/main": 1}},
+		{"all-logs alone covers every pod", []string{"--all-logs", "4"}, map[string]int64{"web-aaa/main!previous": 4, "web-ddd/main": 4, "web-ccc/main": 4}},
+		{"logs alone keeps to pods that need attention", []string{"--logs", "3"}, map[string]int64{"web-aaa/main!previous": 3, "web-ddd/main": 3}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := logsCluster(t)
+			c.setLog("web-ccc/main", "healthy replica log\n")
+			_, err := run(t, c, "prod", append([]string{"health", "web"}, tt.args...)...)
+			wantProblems(t, err, true)
+			if len(c.logTails) != len(tt.want) {
+				t.Fatalf("requests = %v, want %v", c.logTails, tt.want)
+			}
+			for key, lines := range tt.want {
+				if c.logTails[key] != lines {
+					t.Errorf("%s: asked for %d lines, want %d (all: %v)", key, c.logTails[key], lines, c.logTails)
+				}
+			}
+		})
+	}
+}
+
 func TestHealthLogsFlagsValidation(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
 		want string
 	}{
-		{"logs and all-logs together", []string{"--logs", "3", "--all-logs", "3"}, "--logs and --all-logs"},
 		{"all-logs too large", []string{"--all-logs", "1001"}, "1000"},
 		{"all-logs negative", []string{"--all-logs", "-1"}, "--all-logs"},
 		{"tail without wait", []string{"--logs", "3", "--tail"}, "--tail requires --wait"},

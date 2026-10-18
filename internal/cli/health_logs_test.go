@@ -19,6 +19,10 @@ func (c *cluster) readLog(_ context.Context, ns, pod, container string, tail int
 	defer c.logMu.Unlock()
 	c.logCalls = append(c.logCalls, ns+"/"+key)
 	c.logTail = tail
+	if c.logTails == nil {
+		c.logTails = map[string]int64{}
+	}
+	c.logTails[key] = tail
 	if msg, ok := c.logErrors[key]; ok {
 		return "", errors.New(msg)
 	}

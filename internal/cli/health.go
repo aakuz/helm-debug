@@ -131,8 +131,8 @@ var workloadGVR = map[string]schema.GroupVersionResource{
 // healthOptions are the flags that shape one run of the health command.
 type healthOptions struct {
 	revision int
-	logLines int  // lines of log per container; 0 reads no logs
-	allLogs  bool // read every started container of every pod, not only the ones that need attention
+	logLines int  // --logs: lines of log of the pods that need attention; 0 = none
+	allLogs  int  // --all-logs: lines of log of every started container of every pod; 0 = none
 	tail     bool // with --wait: print only log lines that were not shown before
 
 	timeout, interval time.Duration
@@ -148,8 +148,9 @@ func newHealthCommand(o *Options) *cobra.Command {
 		Long: `Check the rollout status of the Deployments and StatefulSets declared by a release
 revision, list their pods that crash or cannot pull an image, and show the warning events of
 the last hour for these workloads and pods. With --logs N it also shows the last N log lines of
-the pods that crash, fail to start or are not ready; --all-logs N shows them for every container of
-every pod. Nothing is changed.
+the pods that crash, fail to start or are not ready; --all-logs M shows the last M lines of every
+container of every pod. The two are independent and can be combined: pods that need attention get N
+lines, every other container M. Nothing is changed.
 
 With --wait (-w) it polls until the release is healthy, printing the state again whenever it changes
 (including the log lines when --logs or --all-logs is set), and exits with code 2 if --timeout passes
@@ -160,7 +161,7 @@ Exits with code 2 when a workload is not fully rolled out or absent, a pod is cr
 release itself is pending, uninstalling or failed.`,
 		Example: `  helm-debug health backend -n prod
   helm-debug health backend -w --logs 20
-  helm-debug health backend -w --all-logs 10 --tail
+  helm-debug health backend -w --logs 50 --all-logs 5 --tail
   helm-debug health backend -o json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -168,9 +169,6 @@ release itself is pending, uninstalling or failed.`,
 				if n < 0 || n > maxLogs {
 					return fmt.Errorf("--%s must be between 0 and %d", name, maxLogs)
 				}
-			}
-			if logLines > 0 && allLogs > 0 {
-				return fmt.Errorf("--logs and --all-logs cannot be used together")
 			}
 			if tail && !wait {
 				return fmt.Errorf("--tail requires --wait")
@@ -193,7 +191,7 @@ release itself is pending, uninstalling or failed.`,
 			if err != nil {
 				return err
 			}
-			opts := healthOptions{revision: revision, logLines: max(logLines, allLogs), allLogs: allLogs > 0, tail: tail, timeout: timeout, interval: interval}
+			opts := healthOptions{revision: revision, logLines: logLines, allLogs: allLogs, tail: tail, timeout: timeout, interval: interval}
 			if wait {
 				return waitHealth(cmd, o, c, args[0], opts)
 			}
@@ -384,10 +382,10 @@ func runHealth(cmd *cobra.Command, o *Options, c *Clients, name string, opts hea
 			if ph != nil {
 				w.Pods = append(w.Pods, *ph)
 			}
-			targets = append(targets, logTargetsOf(p, ph, w.Status == unhealthy, opts.allLogs)...)
+			targets = append(targets, logTargetsOf(p, ph, w.Status == unhealthy, opts)...)
 		}
-		if opts.logLines > 0 && c.Logs != nil {
-			w.Logs = readLogs(cmd, c, w.Namespace, targets, opts.logLines)
+		if c.Logs != nil {
+			w.Logs = readLogs(cmd, c, w.Namespace, targets)
 		}
 	})
 
