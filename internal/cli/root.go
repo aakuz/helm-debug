@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/metadata"
@@ -130,9 +131,13 @@ func realClients(o *Options) (*Clients, error) {
 	if err != nil {
 		return nil, err
 	}
+	disc, err := discovery.NewDiscoveryClientForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
 	return &Clients{
 		Store:     &helm.Store{Kube: kc, Metadata: mc, Driver: drv},
-		Cluster:   &kube.Cluster{Dynamic: dc, Mapper: mapper},
+		Cluster:   &kube.Cluster{Dynamic: dc, Mapper: mapper, Discovery: disc, Metadata: mc},
 		Namespace: ns,
 		Logs:      kube.PodLogReader(kc),
 	}, nil
