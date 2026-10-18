@@ -16,6 +16,9 @@ type logTarget struct {
 	pod, container string
 	previous       bool
 	lines          int // how many lines to read
+
+	id       string // container ID and restart count identify the run whose log is read
+	restarts int32
 }
 
 // logTargetsOf lists the containers whose logs to read for a pod. The container that explains a problem
@@ -28,12 +31,12 @@ func logTargetsOf(p corev1.Pod, problem *podHealth, workloadUnhealthy bool, opts
 		targets = append(targets, t)
 	}
 	if opts.allLogs > 0 {
-		for _, cs := range p.Status.ContainerStatuses {
+		for _, cs := range slices.Concat(p.Status.InitContainerStatuses, p.Status.ContainerStatuses) {
 			if cs.State.Waiting != nil && cs.RestartCount == 0 {
 				continue // never started: no log
 			}
 			if !slices.ContainsFunc(targets, func(t logTarget) bool { return t.container == cs.Name }) {
-				targets = append(targets, logTarget{pod: p.Name, container: cs.Name, previous: cs.RestartCount > 0 && cs.State.Waiting != nil, lines: opts.allLogs})
+				targets = append(targets, logTarget{pod: p.Name, container: cs.Name, previous: cs.RestartCount > 0 && cs.State.Waiting != nil, lines: opts.allLogs, id: cs.ContainerID, restarts: cs.RestartCount})
 			}
 		}
 	}
@@ -70,7 +73,7 @@ func logTargetOf(p corev1.Pod, problem *podHealth, workloadUnhealthy bool) (logT
 	if cs == nil || cs.State.Waiting != nil && cs.RestartCount == 0 {
 		return logTarget{}, false // no container, or one that never started and has no log
 	}
-	return logTarget{pod: p.Name, container: cs.Name, previous: cs.RestartCount > 0 && cs.State.Waiting != nil}, true
+	return logTarget{pod: p.Name, container: cs.Name, previous: cs.RestartCount > 0 && cs.State.Waiting != nil, id: cs.ContainerID, restarts: cs.RestartCount}, true
 }
 
 func podReady(p corev1.Pod) bool {
@@ -90,7 +93,7 @@ func readLogs(cmd *cobra.Command, c *Clients, namespace string, targets []logTar
 	})
 	logs := make([]podLog, len(targets))
 	for i, t := range targets {
-		logs[i] = podLog{Pod: t.pod, Container: t.container, Previous: t.previous}
+		logs[i] = podLog{Pod: t.pod, Container: t.container, Previous: t.previous, id: t.id, restarts: t.restarts}
 		text, err := c.Logs(cmd.Context(), namespace, t.pod, t.container, int64(t.lines), t.previous)
 		if err != nil {
 			logs[i].Error = cleanLine(err.Error())
@@ -101,29 +104,37 @@ func readLogs(cmd *cobra.Command, c *Clients, namespace string, targets []logTar
 	return logs
 }
 
+// logKey identifies one stream of log lines: a container run of a pod. A restart starts a new stream,
+// even when the log of the crashed run reads exactly like the one before.
+type logKey struct {
+	namespace, pod, container string
+	previous                  bool
+	id                        string
+	restarts                  int32
+}
+
 // logMemory remembers which log lines were already printed, for --tail.
 type logMemory struct {
-	lines map[string][]string
-	errs  map[string]string
+	lines map[logKey][]string
+	errs  map[logKey]string
 }
 
 func newLogMemory() *logMemory {
-	return &logMemory{lines: map[string][]string{}, errs: map[string]string{}}
-}
-
-func logKey(namespace string, l podLog) string {
-	return fmt.Sprintf("%s/%s/%s/%t", namespace, l.Pod, l.Container, l.Previous)
+	return &logMemory{lines: map[logKey][]string{}, errs: map[logKey]string{}}
 }
 
 // news returns a copy of res whose logs hold only what was not printed before, and remembers what it
 // returned. A container that printed nothing new, or failed with the same error again, is left out.
+// Streams that are absent from res are forgotten, so a pod that comes back is shown in full.
 func (m *logMemory) news(res *healthResult) *healthResult {
 	out := *res
 	out.Workloads = make([]workloadHealth, len(res.Workloads))
+	present := map[logKey]bool{}
 	for i, w := range res.Workloads {
 		var fresh []podLog
 		for _, l := range w.Logs {
-			key := logKey(w.Namespace, l)
+			key := logKey{w.Namespace, l.Pod, l.Container, l.Previous, l.id, l.restarts}
+			present[key] = true
 			if l.Error != "" {
 				if m.errs[key] != l.Error {
 					m.errs[key] = l.Error
@@ -139,11 +150,22 @@ func (m *logMemory) news(res *healthResult) *healthResult {
 				continue
 			}
 			if l.Lines = newLines(prev, l.Lines); len(l.Lines) > 0 {
+				l.more = true
 				fresh = append(fresh, l)
 			}
 		}
 		w.Logs = fresh
 		out.Workloads[i] = w
+	}
+	for key := range m.lines {
+		if !present[key] {
+			delete(m.lines, key)
+		}
+	}
+	for key := range m.errs {
+		if !present[key] {
+			delete(m.errs, key)
+		}
 	}
 	return &out
 }
@@ -178,15 +200,19 @@ func hasLogs(res *healthResult) bool {
 	return false
 }
 
-// printLogs prints the log tail of every container in res; suffix is appended to each heading.
-func printLogs(o *Options, w io.Writer, res *healthResult, suffix string) {
+// printLogs prints the log tail of every container in res; lines that continue a log already shown are
+// labelled as new.
+func printLogs(o *Options, w io.Writer, res *healthResult) {
 	for _, wl := range res.Workloads {
 		for _, l := range wl.Logs {
 			run := ""
 			if l.Previous {
 				run = ", previous run"
 			}
-			fmt.Fprintf(w, "\nLogs of %s (container %s%s%s):\n", l.Pod, l.Container, run, suffix)
+			if l.more {
+				run += ", new lines"
+			}
+			fmt.Fprintf(w, "\nLogs of %s (container %s%s):\n", l.Pod, l.Container, run)
 			switch {
 			case l.Error != "":
 				fmt.Fprintf(w, "  %s unavailable: %s\n", o.paint("warning:", yellow), l.Error)

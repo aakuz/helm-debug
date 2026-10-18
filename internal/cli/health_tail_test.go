@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -149,7 +150,11 @@ func TestHealthWaitTailStructuredOutputKeepsFullLogs(t *testing.T) {
 	c := recoveringCluster(t)
 	r := runWait(t, c, nil, "health", "web", "--wait", "--logs", "2", "--tail", "--timeout", "2s", "-o", "json")
 	wantProblems(t, r.err, true)
-	if !strings.Contains(r.out, `"starting"`) || !strings.Contains(r.out, `"panic: no database"`) {
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(r.out), &doc); err != nil {
+		t.Fatalf("want a single JSON document: %v\n%s", err, r.out)
+	}
+	if !strings.Contains(r.out, `"starting"`) || !strings.Contains(r.out, `"panic: no database"`) || strings.Contains(r.out, "new lines") {
 		t.Fatalf("json output carries the whole tail:\n%s", r.out)
 	}
 }
@@ -228,5 +233,102 @@ func TestHealthWaitTailShowsAReadErrorOncePerStreak(t *testing.T) {
 	}
 	if strings.Count(r.out, "back") != 1 {
 		t.Fatalf("the recovered log must be shown once:\n%s", r.out)
+	}
+}
+
+func TestHealthWaitTailShowsTheSameCrashAgain(t *testing.T) {
+	// a deterministic crash loop writes the same log every time: a new restart is new output
+	c := recoveringCluster(t)
+	r := runWait(t, c, func(n int, cl *Clients) {
+		if n == 1 {
+			setPod(t, cl, podDoc("web-aaa", "web", "Running", "CrashLoopBackOff", 8))
+		}
+	}, "health", "web", "--wait", "--logs", "5", "--tail", "--timeout", "4s", "--interval", "2s")
+	wantProblems(t, r.err, true)
+	if got := strings.Count(r.out, "panic: no database"); got != 2 {
+		t.Fatalf("want the log of the new crash (2 prints), got %d:\n%s", got, r.out)
+	}
+	if strings.Contains(r.out, "new lines") {
+		t.Fatalf("a restarted container is a new stream, not new lines of the old one:\n%s", r.out)
+	}
+}
+
+func TestHealthWaitTailLabelsOnlyContinuedStreamsAsNewLines(t *testing.T) {
+	c := recoveringCluster(t)
+	c.setLog("web-aaa/main", "now running\n")
+	r := runWait(t, c, func(n int, cl *Clients) {
+		if n == 1 { // the container came back: the previous-run key becomes a current-run one
+			setPod(t, cl, podDoc("web-aaa", "web", "Running", "", 8))
+		}
+	}, "health", "web", "--wait", "--logs", "5", "--tail", "--timeout", "2s", "--interval", "2s")
+	wantProblems(t, r.err, true)
+	if strings.Contains(r.out, "new lines") || !strings.Contains(r.out, "now running") {
+		t.Fatalf("a stream seen for the first time is printed in full without the new-lines label:\n%s", r.out)
+	}
+}
+
+func TestLogMemoryForgetsContainersThatDisappear(t *testing.T) {
+	res := func(lines ...string) *healthResult {
+		w := workloadHealth{Namespace: "prod", Name: "web"}
+		if lines != nil {
+			w.Logs = []podLog{{Pod: "web-0", Container: "main", Lines: lines, id: "c1"}}
+		}
+		return &healthResult{Workloads: []workloadHealth{w}}
+	}
+	m := newLogMemory()
+	m.news(res("a", "b"))
+	if got := m.news(res("a", "b", "c")).Workloads[0].Logs; len(got) != 1 || !slices.Equal(got[0].Lines, []string{"c"}) || !got[0].more {
+		t.Fatalf("a continued stream shows only the new line, got %+v", got)
+	}
+	m.news(res())                                       // the pod is gone
+	got := m.news(res("a", "b", "c")).Workloads[0].Logs // a pod with the same name came back
+	if len(got) != 1 || !slices.Equal(got[0].Lines, []string{"a", "b", "c"}) || got[0].more {
+		t.Fatalf("a container that came back is a new stream, got %+v", got)
+	}
+}
+
+func TestHealthAllLogsIncludesStartedInitContainers(t *testing.T) {
+	c := healthCluster(t)
+	c.deployment("web", 1, 1, 1, 1, 1, 1)
+	c.statefulSet("db", 1, 1, 1)
+	c.podWithStatus("web-1", "web", `  phase: Running
+  conditions: [{type: Ready, status: "True"}]
+  initContainerStatuses:
+  - {name: migrate, ready: true, restartCount: 0, state: {terminated: {exitCode: 0, reason: Completed}}}
+  - {name: waiting-init, ready: false, restartCount: 0, state: {waiting: {reason: PodInitializing}}}
+  containerStatuses:
+  - {name: main, ready: true, restartCount: 0, state: {running: {startedAt: "2026-10-18T10:00:00Z"}}}
+`)
+	c.setLog("web-1/migrate", "migrated\n")
+	c.setLog("web-1/main", "serving\n")
+	out, err := run(t, c, "prod", "health", "web", "--all-logs", "3")
+	wantProblems(t, err, false)
+	got := slices.Clone(c.logCalls)
+	slices.Sort(got)
+	if want := []string{"prod/web-1/main", "prod/web-1/migrate"}; !slices.Equal(got, want) {
+		t.Fatalf("log requests = %v, want %v (the init container that never started has no log)", got, want)
+	}
+	if !strings.Contains(out, "migrated") || !strings.Contains(out, "serving") {
+		t.Fatalf("want init and app logs:\n%s", out)
+	}
+}
+
+func TestHealthLogsAndAllLogsUnderWaitTail(t *testing.T) {
+	c := recoveringCluster(t)
+	c.readyPod("web-ok", "web")
+	c.setLog("web-ok/main", "fine\n")
+	r := runWait(t, c, nil, "health", "web", "--wait", "--logs", "1", "--all-logs", "3", "--tail", "--timeout", "2s")
+	wantProblems(t, r.err, true)
+	if c.logTails["web-aaa/main!previous"] != 1 || c.logTails["web-ok/main"] != 3 {
+		t.Fatalf("lines asked for = %v, want 1 for the crashing pod and 3 for the healthy one", c.logTails)
+	}
+}
+
+func TestHealthLogsValidationNamesTheFirstInvalidFlag(t *testing.T) {
+	for i := 0; i < 20; i++ { // map iteration order must not decide the message
+		_, err := run(t, logsCluster(t), "prod", "health", "web", "--logs", "2000", "--all-logs", "2000")
+		if err == nil || !strings.Contains(err.Error(), "--logs ") {
+			t.Fatalf("want the --logs error first, got %v", err)
+		}
 	}
 }

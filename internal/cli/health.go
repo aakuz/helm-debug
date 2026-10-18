@@ -32,7 +32,7 @@ const (
 	unhealthy = "unhealthy"
 )
 
-// maxLogs is the largest accepted --logs value.
+// maxLogs is the largest accepted --logs or --all-logs value.
 const maxLogs = 1000
 
 // noLogs are waiting reasons of containers that never started, so they have no log to read.
@@ -69,6 +69,12 @@ type podLog struct {
 	Previous  bool     `json:"previous,omitempty"`
 	Lines     []string `json:"lines,omitempty"`
 	Error     string   `json:"error,omitempty"`
+
+	// id and restarts tell one run of a container from another; more marks lines that continue a log
+	// already shown (--tail). None of them is part of the output.
+	id       string
+	restarts int32
+	more     bool
 }
 
 type workloadHealth struct {
@@ -165,9 +171,12 @@ release itself is pending, uninstalling or failed.`,
   helm-debug health backend -o json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			for name, n := range map[string]int{"logs": logLines, "all-logs": allLogs} {
-				if n < 0 || n > maxLogs {
-					return fmt.Errorf("--%s must be between 0 and %d", name, maxLogs)
+			for _, f := range []struct {
+				name string
+				n    int
+			}{{"logs", logLines}, {"all-logs", allLogs}} {
+				if f.n < 0 || f.n > maxLogs {
+					return fmt.Errorf("--%s must be between 0 and %d", f.name, maxLogs)
 				}
 			}
 			if tail && !wait {
@@ -213,7 +222,7 @@ release itself is pending, uninstalling or failed.`,
 	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "With --wait: give up after this long and exit with code 2")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "With --wait: time between polls")
 	cmd.Flags().IntVar(&logLines, "logs", 0, "Show the last N log lines of problem and not-ready pods (0 = off)")
-	cmd.Flags().IntVar(&allLogs, "all-logs", 0, "Show the last N log lines of every container of every pod (0 = off)")
+	cmd.Flags().IntVar(&allLogs, "all-logs", 0, "Show the last N log lines of every started container of every pod; --logs sets N for the pods that need attention (0 = off)")
 	cmd.Flags().BoolVar(&tail, "tail", false, "With --wait and --logs/--all-logs: print only log lines not shown before")
 	return cmd
 }
@@ -259,11 +268,7 @@ func waitHealth(cmd *cobra.Command, o *Options, c *Clients, name string, opts he
 					if changed {
 						printHealthState(o, o.Out, fresh)
 					}
-					suffix := ""
-					if last != nil {
-						suffix = ", new lines"
-					}
-					printLogs(o, o.Out, fresh, suffix)
+					printLogs(o, o.Out, fresh)
 				}
 				last = sig
 			}
@@ -547,7 +552,7 @@ func eventTime(ev corev1.Event) time.Time {
 // printHealth prints the state of the release followed by the logs of its pods.
 func printHealth(o *Options, w io.Writer, res *healthResult) {
 	printHealthState(o, w, res)
-	printLogs(o, w, res, "")
+	printLogs(o, w, res)
 }
 
 // printHealthState prints the release, its workloads, problem pods and warning events.

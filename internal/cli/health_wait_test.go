@@ -67,6 +67,17 @@ func setDeployment(t *testing.T, cl *Clients, doc string) {
 	}
 }
 
+func setPod(t *testing.T, cl *Clients, doc string) {
+	t.Helper()
+	u := &unstructured.Unstructured{}
+	if err := yaml.Unmarshal([]byte(doc), &u.Object); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cl.Cluster.Dynamic.Resource(podsGVR).Namespace("prod").Update(context.Background(), u, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func deletePod(t *testing.T, cl *Clients, name string) {
 	t.Helper()
 	if err := cl.Cluster.Dynamic.Resource(podsGVR).Namespace("prod").Delete(context.Background(), name, metav1.DeleteOptions{}); err != nil {

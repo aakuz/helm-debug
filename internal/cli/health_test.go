@@ -64,11 +64,15 @@ status:
 // pod adds a pod of the app; waiting is the reason of its waiting container, empty for a running one.
 func (c *cluster) pod(name, app, phase, waiting string, restarts int) {
 	c.t.Helper()
+	c.yaml(podDoc(name, app, phase, waiting, restarts))
+}
+
+func podDoc(name, app, phase, waiting string, restarts int) string {
 	state := "running: {startedAt: \"2026-10-18T10:00:00Z\"}"
 	if waiting != "" {
 		state = "waiting: {reason: " + waiting + "}"
 	}
-	c.yaml(fmt.Sprintf(`apiVersion: v1
+	return fmt.Sprintf(`apiVersion: v1
 kind: Pod
 metadata: {name: %s, namespace: prod, labels: {app: %s}}
 status:
@@ -77,7 +81,7 @@ status:
   - name: main
     restartCount: %d
     state: {%s}
-`, name, app, phase, restarts, state))
+`, name, app, phase, restarts, state)
 }
 
 func (c *cluster) event(name, typ, kind, object, reason, message, last string, count int) {
