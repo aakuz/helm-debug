@@ -54,6 +54,8 @@ func (c *Cluster) ListHelmManaged(ctx context.Context, namespace string, progres
 			targets = append(targets, target{gv.WithResource(r.Name), r.Kind, r.Namespaced})
 		}
 	}
+	// Discovery returns kinds in no particular order; a stable one keeps progress and warnings reproducible.
+	slices.SortFunc(targets, func(a, b target) int { return strings.Compare(a.gvr.String(), b.gvr.String()) })
 	selector := LabelManagedBy + "=Helm"
 	var out []Managed
 	for i, t := range targets {

@@ -96,9 +96,9 @@ Exits with code 2 when lost resources are found.`,
 				exists[key] = found
 				return found
 			}
-			progress, clear := o.progressFunc("resource kinds")
+			progress, eraseProgress := o.progressFunc("resource kinds")
 			objs, warnings, err := c.Cluster.ListHelmManaged(cmd.Context(), ns, progress)
-			clear()
+			eraseProgress()
 			if err != nil {
 				return err
 			}
