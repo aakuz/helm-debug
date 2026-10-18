@@ -35,8 +35,9 @@ func newLostFoundCommand(o *Options) *cobra.Command {
 Every object labeled app.kubernetes.io/managed-by=Helm and annotated with
 meta.helm.sh/release-name is matched against the release records in the storage
 (all namespaces). Objects whose release has no record are listed, grouped by the
-release they claim. Cluster-scoped kinds are always checked; namespaced kinds in
-the current namespace, or in all of them with -A. Nothing is changed.
+release they claim. Namespaced kinds are checked in the current namespace, or in
+all of them with -A; cluster-scoped objects are attributed to the namespace of the
+release they claim and are listed only for that namespace. Nothing is changed.
 
 Exits with code 2 when lost resources are found.`,
 		Example: `  helm-debug lost-found -A

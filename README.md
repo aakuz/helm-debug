@@ -250,8 +250,9 @@ prod               gone     Deployment   prod       gone
 ```
 
 Matches every object labeled `app.kubernetes.io/managed-by=Helm` and annotated with
-`meta.helm.sh/release-name` against the release records of all namespaces. Cluster-scoped kinds
-are always checked; namespaced kinds in the current namespace, or everywhere with `-A`. Objects
+`meta.helm.sh/release-name` against the release records of all namespaces. Namespaced kinds
+are checked in the current namespace, or everywhere with `-A`; cluster-scoped objects (ClusterRole, …)
+are attributed to the namespace of the release they claim and shown only for that namespace. Objects
 without the release annotation are skipped, since the release they belong to cannot be named.
 Kinds that cannot be listed (for example for lack of permissions) are reported as warnings.
 

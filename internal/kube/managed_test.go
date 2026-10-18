@@ -53,6 +53,7 @@ func TestListHelmManaged(t *testing.T) {
 		partial("v1", "Service", "prod", "web", l, a),
 		partial("v1", "Service", "dev", "web", l, a),
 		partial("rbac.authorization.k8s.io/v1", "ClusterRole", "", "rbac-reader", cl, ca),
+		partial("rbac.authorization.k8s.io/v1", "ClusterRole", "", "web-reader", l, a),
 		// managed by Helm but with no release annotation: the release cannot be named
 		partial("v1", "ConfigMap", "prod", "no-annotations", l, nil),
 		// not managed by Helm
@@ -67,7 +68,7 @@ func TestListHelmManaged(t *testing.T) {
 		t.Fatalf("unexpected warnings: %v", warnings)
 	}
 	want := []Managed{
-		{Kind: "ClusterRole", Name: "rbac-reader", ReleaseName: "rbac", ReleaseNamespace: "ops"},
+		{Kind: "ClusterRole", Name: "web-reader", ReleaseName: "web", ReleaseNamespace: "prod"},
 		{Kind: "ConfigMap", Namespace: "prod", Name: "web-config", ReleaseName: "web", ReleaseNamespace: "prod"},
 		{Kind: "Service", Namespace: "prod", Name: "web", ReleaseName: "web", ReleaseNamespace: "prod"},
 	}
@@ -79,8 +80,8 @@ func TestListHelmManaged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(all) != 4 {
-		t.Fatalf("ListHelmManaged(all namespaces) returned %d objects, want 4: %+v", len(all), all)
+	if len(all) != 5 {
+		t.Fatalf("ListHelmManaged(all namespaces) returned %d objects, want 5: %+v", len(all), all)
 	}
 }
 

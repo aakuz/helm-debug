@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/metadata"
+	"k8s.io/client-go/rest"
 
 	"github.com/aakuz/helm-debug/internal/helm"
 	"github.com/aakuz/helm-debug/internal/kube"
@@ -63,8 +64,12 @@ type Options struct {
 
 // NewOptions returns options with defaults taken from the environment.
 func NewOptions() *Options {
+	flags := genericclioptions.NewConfigFlags(true).WithWrapConfigFn(func(cfg *rest.Config) *rest.Config {
+		cfg.WarningHandlerWithContext = deprecationWarningFilter{}
+		return cfg
+	})
 	o := &Options{
-		Flags:       genericclioptions.NewConfigFlags(true),
+		Flags:       flags,
 		Storage:     os.Getenv("HELM_DRIVER"),
 		Concurrency: 8,
 		Out:         os.Stdout,
@@ -76,6 +81,15 @@ func NewOptions() *Options {
 	applyHelmEnv(o.Flags)
 	o.Verbose, _ = strconv.ParseBool(os.Getenv("HELM_DEBUG"))
 	return o
+}
+
+type deprecationWarningFilter struct{}
+
+func (deprecationWarningFilter) HandleWarningHeaderWithContext(ctx context.Context, code int, agent, message string) {
+	if strings.Contains(message, " is deprecated ") {
+		return
+	}
+	rest.WarningLogger{}.HandleWarningHeaderWithContext(ctx, code, agent, message)
 }
 
 // applyHelmEnv uses the variables helm passes to plugins as flag defaults, so

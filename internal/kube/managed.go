@@ -22,7 +22,8 @@ type Managed struct {
 
 // ListHelmManaged lists the objects of every listable kind that carry the Helm
 // managed-by label and a release-name annotation. Cluster-scoped kinds are always
-// listed; namespaced kinds only in namespace, or everywhere when it is empty.
+// listed; with a namespace, namespaced kinds are listed only there and cluster-scoped objects are kept only when
+// their release is in that namespace. An empty namespace means everywhere.
 // Kinds that cannot be listed are reported as warnings instead of failing the scan.
 // Only object metadata is read, so Secret data never leaves the API server.
 // progress, when not nil, is called after each kind with the number of kinds done, the total and the kind's resource name.
@@ -76,6 +77,10 @@ func (c *Cluster) ListHelmManaged(ctx context.Context, namespace string, progres
 				relNs := it.Annotations[AnnotationReleaseNamespace]
 				if relNs == "" {
 					relNs = it.Namespace
+				}
+				// A namespace scan only covers cluster-scoped objects that belong to releases of that namespace.
+				if !t.namespaced && namespace != "" && relNs != namespace {
+					continue
 				}
 				out = append(out, Managed{Kind: t.kind, Namespace: it.Namespace, Name: it.Name, ReleaseName: name, ReleaseNamespace: relNs})
 			}
