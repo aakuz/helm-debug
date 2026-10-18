@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="helm-debug" width="600">
+</p>
+
 # helm-debug
 
 Read-only CLI for debugging Helm releases. It reads release records straight from the cluster
