@@ -55,7 +55,7 @@ values are masked: a changed value is shown as <masked:old> and <masked:new>.
 User values are shown as stored. Exits with code 0 whether or not the
 revisions differ.`,
 		Args: cobra.ExactArgs(3),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			from, err := parseRevision(args[1])
 			if err != nil {
 				return err
