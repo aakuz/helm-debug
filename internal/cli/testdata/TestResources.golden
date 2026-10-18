@@ -1,0 +1,17 @@
+Release prod/backend revision 2 (deployed)
+
+KIND         NAMESPACE  NAME             HOOK         STATUS        OWNERSHIP
+ClusterRole  -          backend-reader   -            present       ok
+ConfigMap    shared     backend-config   -            present       mismatch (prod/frontend managed-by=Helm)
+Deployment   prod       backend          -            present       ok
+Service      prod       backend          -            present       missing
+Widget       -          backend-widget   -            unknown-kind  -
+Job          prod       backend-migrate  pre-upgrade  absent        -
+
+error: Widget/backend-widget: no matches for kind "Widget" in version "example.com/v1"
+
+Suggested fixes (let Helm adopt the objects):
+  kubectl -n shared annotate ConfigMap/backend-config meta.helm.sh/release-name=backend meta.helm.sh/release-namespace=prod --overwrite
+  kubectl -n shared label ConfigMap/backend-config app.kubernetes.io/managed-by=Helm --overwrite
+  kubectl -n prod annotate Service/backend meta.helm.sh/release-name=backend meta.helm.sh/release-namespace=prod --overwrite
+  kubectl -n prod label Service/backend app.kubernetes.io/managed-by=Helm --overwrite

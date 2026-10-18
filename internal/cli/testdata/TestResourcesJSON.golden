@@ -1,0 +1,63 @@
+{
+  "release": "backend",
+  "namespace": "prod",
+  "revision": 1,
+  "status": "superseded",
+  "resources": [
+    {
+      "apiVersion": "rbac.authorization.k8s.io/v1",
+      "kind": "ClusterRole",
+      "name": "backend-reader",
+      "status": "present",
+      "ownership": "ok"
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "shared",
+      "name": "backend-config",
+      "status": "present",
+      "ownership": "mismatch",
+      "owner": "prod/frontend managed-by=Helm"
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "namespace": "prod",
+      "name": "backend",
+      "status": "present",
+      "ownership": "ok"
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "namespace": "prod",
+      "name": "backend",
+      "status": "present",
+      "ownership": "missing"
+    },
+    {
+      "apiVersion": "example.com/v1",
+      "kind": "Widget",
+      "name": "backend-widget",
+      "status": "unknown-kind",
+      "error": "no matches for kind \"Widget\" in version \"example.com/v1\""
+    },
+    {
+      "apiVersion": "batch/v1",
+      "kind": "Job",
+      "namespace": "prod",
+      "name": "backend-migrate",
+      "hook": [
+        "pre-upgrade"
+      ],
+      "status": "absent"
+    }
+  ],
+  "fixes": [
+    "kubectl -n shared annotate ConfigMap/backend-config meta.helm.sh/release-name=backend meta.helm.sh/release-namespace=prod --overwrite",
+    "kubectl -n shared label ConfigMap/backend-config app.kubernetes.io/managed-by=Helm --overwrite",
+    "kubectl -n prod annotate Service/backend meta.helm.sh/release-name=backend meta.helm.sh/release-namespace=prod --overwrite",
+    "kubectl -n prod label Service/backend app.kubernetes.io/managed-by=Helm --overwrite"
+  ]
+}

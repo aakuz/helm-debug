@@ -1,0 +1,3 @@
+NAMESPACE  RELEASE  REVISION  STATUS           AGE  FIX
+dev        fresh    1         pending-install  9h   helm uninstall fresh -n dev
+prod       backend  3         pending-upgrade  7h   helm rollback backend 2 -n prod
