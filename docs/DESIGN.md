@@ -53,6 +53,18 @@ fields use Kubernetes quantity comparison to avoid false drift from canonicaliza
 compared in order and by length. No values are included in output, so Secret values stay private.
 Unknown kinds and failed GETs return execution errors rather than an in-sync verdict.
 
+## Diff
+
+`diff RELEASE REV1 REV2` loads both revisions with `Store.Revision` and compares them without
+touching live objects. Manifest documents are keyed by apiVersion/kind/namespace/name exactly as
+stored (no scope resolution) and reported as `added`, `removed` or `changed` with a unified-style
+line diff of the object YAML (sorted keys, 3 lines of context; a small built-in LCS diff, since no
+diff library is in go.mod). Hooks are excluded, as in `drift`. Secret `data`/`stringData` values are
+masked in both revisions before diffing: `<masked>` normally, `<masked:old>`/`<masked:new>` for a
+key whose value differs, so a change is visible without printing anything or exposing a hash.
+User values (`Release.Config`) are diffed as stored YAML, unmasked. A difference is information,
+so the exit code is 0; only errors (unknown revision, bad arguments) exit 1.
+
 ## Ownership
 
 Helm adopts and updates an existing object only if it has:

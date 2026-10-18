@@ -174,6 +174,7 @@ func NewRootCommand(o *Options) *cobra.Command {
 	root.AddCommand(
 		newResourcesCommand(o),
 		newDriftCommand(o),
+		newDiffCommand(o),
 		newFindCommand(o),
 		newHistoryCommand(o),
 		newStuckCommand(o),

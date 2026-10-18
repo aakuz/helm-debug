@@ -6,6 +6,7 @@ Debug Helm releases by reading their records straight from the cluster storage
 - **`resources`** – which objects a release revision declares (hooks included), whether they exist
   and whether they carry the ownership metadata Helm needs to manage them.
 - **`drift`** – which declared fields differ between the latest stored manifest and live objects.
+- **`diff`** – rendered manifest and user-values differences between two revisions.
 - **`find`** – which release(s) declare a given object.
 - **`history`** – revisions with status, chart/app version and the stored failure reason.
 - **`stuck`** – releases stuck in `pending-install/upgrade/rollback` and the command that unlocks them.
@@ -124,6 +125,41 @@ commonly deletes them after execution. This compares stored intent, not a newly 
 Exit code is 0 when in sync, 2 for drift, and 1 for lookup or manifest errors (including unknown
 kinds). An execution error takes precedence over drift when both occur.
 
+### diff
+
+```console
+$ helm-debug diff backend 1 2 -n prod
+Release prod/backend revisions 1 -> 2
+
+Manifest:
+KIND        NAMESPACE  NAME     STATUS
+Deployment  -          backend  changed
+
+--- Deployment backend (changed)
+@@ -3,4 +3,4 @@
+ metadata:
+   name: backend
+ spec:
+-  replicas: 2
++  replicas: 3
+
+Values:
+@@ -1,2 +1,2 @@
+ image: backend
+-replicas: 2
++replicas: 3
+```
+
+Compares the stored manifests and the user-supplied values (`helm get values`) of two revisions.
+Objects are matched by apiVersion, kind, namespace and name and reported as `added`, `removed` or
+`changed`, with a unified-style diff of each object's YAML. Hooks are excluded, as in `drift`.
+Secret `data` and `stringData` values are masked: unchanged values print as `<masked>`, and a value
+that changed prints as `<masked:old>` and `<masked:new>`. User values are shown as stored, so do not
+keep secrets in them. `-o json` and `-o yaml` return the objects with their status and diff text,
+and the values diff. Only storage records are read, never live objects.
+
+Exit code is 0 whether or not the revisions differ; unknown revisions and other errors exit 1.
+
 ### find
 
 ```console
@@ -165,7 +201,7 @@ may still be in progress.
 
 | Code | Meaning |
 |---|---|
-| 0 | No problems |
+| 0 | No problems (`diff` always exits 0 when it succeeds) |
 | 1 | Execution error (no access, release not found, bad flags, …) |
 | 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`) |
 
@@ -175,6 +211,7 @@ may still be in progress.
 |---|---|
 | `resources` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on every declared object |
 | `drift` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on every declared object |
+| `diff` | `list` on secrets (or configmaps) in the release namespace |
 | `history` | `list` on secrets (or configmaps) in the release namespace |
 | `find` | `get` on the object; `list` + `get` on secrets (or configmaps) cluster-wide for the scan |
 | `stuck` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
