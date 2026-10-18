@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -22,9 +23,11 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	discoveryfake "k8s.io/client-go/discovery/fake"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	metadatafake "k8s.io/client-go/metadata/fake"
+	clienttesting "k8s.io/client-go/testing"
 
 	"github.com/aakuz/helm-debug/internal/helm"
 	"github.com/aakuz/helm-debug/internal/kube"
@@ -117,13 +120,27 @@ func (c *cluster) clients(namespace string) *Clients {
 			ObjectMeta: s.ObjectMeta,
 		})
 	}
+	for _, o := range c.live {
+		u := o.(*unstructured.Unstructured)
+		metas = append(metas, &metav1.PartialObjectMetadata{
+			TypeMeta:   metav1.TypeMeta{APIVersion: u.GetAPIVersion(), Kind: u.GetKind()},
+			ObjectMeta: metav1.ObjectMeta{Namespace: u.GetNamespace(), Name: u.GetName(), Labels: u.GetLabels(), Annotations: u.GetAnnotations()},
+		})
+	}
 	scheme := metadatafake.NewTestScheme()
 	if err := metav1.AddMetaToScheme(scheme); err != nil {
 		c.t.Fatal(err)
 	}
 	mapper := meta.NewDefaultRESTMapper(nil)
 	listKinds := map[schema.GroupVersionResource]string{}
+	var resources []*metav1.APIResourceList
 	for _, k := range kinds {
+		res := metav1.APIResource{Name: k.resource, Kind: k.gvk.Kind, Namespaced: k.namespaced, Verbs: metav1.Verbs{"get", "list"}}
+		if i := slices.IndexFunc(resources, func(l *metav1.APIResourceList) bool { return l.GroupVersion == k.gvk.GroupVersion().String() }); i >= 0 {
+			resources[i].APIResources = append(resources[i].APIResources, res)
+		} else {
+			resources = append(resources, &metav1.APIResourceList{GroupVersion: k.gvk.GroupVersion().String(), APIResources: []metav1.APIResource{res}})
+		}
 		scope := meta.RESTScopeRoot
 		if k.namespaced {
 			scope = meta.RESTScopeNamespace
@@ -133,15 +150,18 @@ func (c *cluster) clients(namespace string) *Clients {
 	}
 	listKinds[schema.GroupVersionResource{Version: "v1", Resource: "pods"}] = "PodList"
 	listKinds[schema.GroupVersionResource{Version: "v1", Resource: "events"}] = "EventList"
+	metaClient := metadatafake.NewSimpleMetadataClient(scheme, metas...)
 	return &Clients{
 		Store: &helm.Store{
 			Kube:     c.kube,
-			Metadata: metadatafake.NewSimpleMetadataClient(scheme, metas...),
+			Metadata: metaClient,
 			Driver:   helm.StorageSecret,
 		},
 		Cluster: &kube.Cluster{
-			Dynamic: dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, c.live...),
-			Mapper:  mapper,
+			Dynamic:   dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, c.live...),
+			Mapper:    mapper,
+			Discovery: &discoveryfake.FakeDiscovery{Fake: &clienttesting.Fake{Resources: resources}},
+			Metadata:  metaClient,
 		},
 		Namespace: namespace,
 		Logs:      c.readLog,

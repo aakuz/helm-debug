@@ -189,6 +189,7 @@ func NewRootCommand(o *Options) *cobra.Command {
 		newHistoryCommand(o),
 		newStuckCommand(o),
 		newHealthCommand(o),
+		newLostFoundCommand(o),
 	)
 	return root
 }

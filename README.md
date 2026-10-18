@@ -16,6 +16,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`history`** – revisions with status, chart/app version and the stored failure reason.
 - **`stuck`** – releases stuck in `pending-install/upgrade/rollback` and the command that unlocks them.
 - **`health`** – readiness of the release's Deployments and StatefulSets, crashing pods and recent warning events.
+- **`lost-found`** – objects that claim a Helm release which no longer exists in the cluster.
 
 The tool is strictly read-only. When it finds a problem it prints the `kubectl`/`helm` command
 that fixes it, but never runs it. Output is a table by default, or `-o json|yaml` for scripts
@@ -238,6 +239,22 @@ prod       backend  3         pending-upgrade  7h   helm rollback backend 2 -n p
 Releases that became pending less than `--older-than` ago (default `5m`) are skipped, because they
 may still be in progress.
 
+### lost-found
+
+```console
+$ helm-debug lost-found -A
+RELEASE NAMESPACE  RELEASE  KIND         NAMESPACE  NAME
+dev                orphan   ConfigMap    dev        orphan-cfg
+prod               gone     ClusterRole  -          gone-reader
+prod               gone     Deployment   prod       gone
+```
+
+Matches every object labeled `app.kubernetes.io/managed-by=Helm` and annotated with
+`meta.helm.sh/release-name` against the release records of all namespaces. Cluster-scoped kinds
+are always checked; namespaced kinds in the current namespace, or everywhere with `-A`. Objects
+without the release annotation are skipped, since the release they belong to cannot be named.
+Kinds that cannot be listed (for example for lack of permissions) are reported as warnings.
+
 ### health
 
 ```console
@@ -422,7 +439,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 |---|---|
 | 0 | No problems (`diff` always exits 0 when it succeeds) |
 | 1 | Execution error (no access, release not found, bad flags, …) |
-| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`) |
+| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`), lost resources (`lost-found`) |
 
 ## RBAC
 
@@ -434,6 +451,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 | `history` | `list` on secrets (or configmaps) in the release namespace |
 | `find` | `get` on the object; `list` + `get` on secrets (or configmaps) cluster-wide for the scan |
 | `stuck` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
+| `lost-found` | `list` on secrets (or configmaps) cluster-wide, `list` on every kind (metadata only) in the namespace, or cluster-wide with `-A`, plus API discovery |
 | `health` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the Deployments and StatefulSets, `list` on pods and events in their namespaces, `get` on `pods/log` with `--logs` or `--all-logs` |
 
 ## Development

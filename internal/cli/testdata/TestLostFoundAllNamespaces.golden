@@ -1,0 +1,6 @@
+RELEASE NAMESPACE  RELEASE  KIND         NAMESPACE  NAME
+dev                alive    ConfigMap    prod       alive-twin
+dev                orphan   ConfigMap    dev        orphan-cfg
+prod               gone     ClusterRole  -          gone-reader
+prod               gone     Deployment   prod       gone
+prod               gone     Service      prod       gone
