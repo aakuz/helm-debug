@@ -121,6 +121,8 @@ func (c *cluster) clients(namespace string) *Clients {
 		mapper.AddSpecific(k.gvk, k.gvk.GroupVersion().WithResource(k.resource), k.gvk.GroupVersion().WithResource(strings.ToLower(k.gvk.Kind)), scope)
 		listKinds[k.gvk.GroupVersion().WithResource(k.resource)] = k.gvk.Kind + "List"
 	}
+	listKinds[schema.GroupVersionResource{Version: "v1", Resource: "pods"}] = "PodList"
+	listKinds[schema.GroupVersionResource{Version: "v1", Resource: "events"}] = "EventList"
 	return &Clients{
 		Store: &helm.Store{
 			Kube:     c.kube,

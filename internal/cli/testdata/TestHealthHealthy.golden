@@ -1,0 +1,5 @@
+Release prod/web revision 1 (deployed)
+
+KIND         NAMESPACE  NAME  READY  STATUS   DETAILS
+Deployment   prod       web   2/2    healthy  -
+StatefulSet  prod       db    1/1    healthy  -

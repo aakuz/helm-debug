@@ -1,0 +1,42 @@
+{
+  "release": "web",
+  "namespace": "prod",
+  "revision": 1,
+  "status": "deployed",
+  "workloads": [
+    {
+      "kind": "Deployment",
+      "namespace": "prod",
+      "name": "web",
+      "status": "unhealthy",
+      "desired": 2,
+      "ready": 1,
+      "message": "1 of 2 available",
+      "pods": [
+        {
+          "name": "web-aaa",
+          "phase": "Running",
+          "reason": "CrashLoopBackOff",
+          "restarts": 4
+        }
+      ]
+    },
+    {
+      "kind": "StatefulSet",
+      "namespace": "prod",
+      "name": "db",
+      "status": "healthy",
+      "desired": 1,
+      "ready": 1
+    }
+  ],
+  "events": [
+    {
+      "object": "Pod/web-aaa",
+      "reason": "BackOff",
+      "message": "Back-off restarting failed container",
+      "count": 3,
+      "lastSeen": "2026-10-18T11:50:00Z"
+    }
+  ]
+}

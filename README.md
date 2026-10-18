@@ -15,6 +15,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`find`** – which release(s) declare a given object.
 - **`history`** – revisions with status, chart/app version and the stored failure reason.
 - **`stuck`** – releases stuck in `pending-install/upgrade/rollback` and the command that unlocks them.
+- **`health`** – readiness of the release's Deployments and StatefulSets, crashing pods and recent warning events.
 
 The tool is strictly read-only. When it finds a problem it prints the `kubectl`/`helm` command
 that fixes it, but never runs it. Output is a table by default, or `-o json|yaml` for scripts
@@ -28,6 +29,7 @@ helm-debug history backend -n prod     # what happened to a release, and why the
 helm-debug diff backend 1 2 -n prod    # what changed between two revisions
 helm-debug resources backend -n prod   # do the declared objects exist, and does Helm own them
 helm-debug drift backend -n prod       # did someone edit the objects by hand
+helm-debug health backend -n prod      # are the workloads rolled out and are pods crashing
 helm-debug find deploy/backend -A      # which release owns this object
 ```
 
@@ -236,6 +238,49 @@ prod       backend  3         pending-upgrade  7h   helm rollback backend 2 -n p
 Releases that became pending less than `--older-than` ago (default `5m`) are skipped, because they
 may still be in progress.
 
+### health
+
+```console
+$ helm-debug health web -n prod
+Release prod/web revision 1 (deployed)
+
+KIND         NAMESPACE  NAME  READY  STATUS     DETAILS
+Deployment   prod       web   1/3    unhealthy  1 of 3 available
+StatefulSet  prod       db    1/2    unhealthy  1 of 2 ready
+
+Pods with problems:
+POD      PHASE    REASON            RESTARTS
+web-aaa  Running  CrashLoopBackOff  7
+web-bbb  Pending  ImagePullBackOff  0
+
+Warning events (last hour):
+LAST SEEN  OBJECT               REASON        COUNT  MESSAGE
+5m         ReplicaSet/web-5d8f  FailedCreate  1      exceeded quota
+10m        Pod/web-aaa          BackOff       12     Back-off restarting failed container
+```
+
+Checks the Deployments and StatefulSets declared by a release revision; hooks and other kinds are
+ignored. For a Deployment, the rollout is incomplete when the controller has not observed the
+current generation, replicas are not yet updated or available, old replicas are still pending
+termination, or the rollout reports `ProgressDeadlineExceeded`. For a StatefulSet, it is incomplete
+when the generation is not observed, replicas are not ready, or replicas below the
+`rollingUpdate.partition` are not updated (the update check is skipped for `OnDelete`).
+
+Pods are found through the workload's label selector and listed under "Pods with problems" only
+when they failed, or a container is waiting with `CrashLoopBackOff`, `ImagePullBackOff`,
+`ErrImagePull`, `InvalidImageName`, `CreateContainerConfigError`, `CreateContainerError` or
+`RunContainerError`. Restarts are summed over init and regular containers. Warning events from the
+last hour are shown for the workloads, their ReplicaSets and their pods.
+
+`--revision N` (`-r`) inspects an older revision. `-o json` and `-o yaml` return the same data,
+including the events. The command is read-only: it only GETs the workloads, LISTs pods and events
+in their namespaces, and reads the release records like the other commands.
+
+Exit code is 0 when every workload is rolled out and no pod is listed. It is 2 when a workload is not
+fully rolled out, absent or could not be read (status `error`), or a pod with problems is listed;
+warning events alone do not cause 2. Errors that stop the command (for example, no such release or
+no access to the release records) exit 1.
+
 ## Output and colors
 
 `table` output is meant for people; `-o json` and `-o yaml` carry the same data for scripts, with
@@ -278,6 +323,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 | `history` | `list` on secrets (or configmaps) in the release namespace |
 | `find` | `get` on the object; `list` + `get` on secrets (or configmaps) cluster-wide for the scan |
 | `stuck` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
+| `health` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the Deployments and StatefulSets, `list` on pods and events in their namespaces |
 
 ## Development
 

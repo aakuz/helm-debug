@@ -102,6 +102,24 @@ The latest revision of a release has status `pending-*`, and it became pending m
 `--older-than` ago. The suggested fix is `helm rollback <release> <last deployed/superseded revision>`,
 or `helm uninstall` when no good revision exists (a failed first install).
 
+## Health
+
+Only `apps/v1` Deployments and StatefulSets of a revision are checked (hooks and other kinds are
+ignored); they are fetched through fixed resources, so no REST mapping is needed. Rollout rules:
+
+- Deployment: incomplete when `observedGeneration` is behind, `ProgressDeadlineExceeded` is set,
+  updated replicas are below the desired count, old replicas still exist, or available replicas are
+  below the desired count (the same checks as `kubectl rollout status`).
+- StatefulSet: incomplete when `observedGeneration` is behind or ready replicas are below the desired
+  count; updated replicas are compared against `replicas - partition`, and not at all for `OnDelete`.
+
+Pods come from the workload's label selector, so workloads with overlapping selectors report each
+other's pods and old-ReplicaSet pods are included during a rollout. A pod is reported only when it
+failed or a container waits with a known bad reason; unschedulable `Pending` pods and `minReadySeconds`
+are only visible through the replica counts and events. Warning events of the last hour (a fixed
+window) are matched by involved object: the workload, its pods, and ReplicaSets named
+`<deployment>-<hash>`. Events never change the exit code; a lookup error for a workload does.
+
 ## Invocation modes
 
 One `main`, built twice by goreleaser as `helm-debug` and `kubectl-helm_debug`, plus a Helm plugin
