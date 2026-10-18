@@ -3,9 +3,12 @@ package cli
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"sort"
 
 	"github.com/spf13/cobra"
+
+	"github.com/aakuz/helm-debug/internal/helm"
 )
 
 type lostResource struct {
@@ -56,11 +59,42 @@ Exits with code 2 when lost resources are found.`,
 			if err != nil {
 				return err
 			}
-			byNamespacedName := map[string]bool{}
-			byName := map[string]bool{}
-			for _, r := range refs {
-				byNamespacedName[r.Namespace+"/"+r.Release] = true
-				byName[r.Release] = true
+			// A record lives in the storage namespace, which can differ from the namespace of the release it holds
+			// (helm -n infra list shows cert-manager/cert-manager for a record stored in infra), so records are
+			// matched by name first and the release namespace is read from the record only when needed.
+			latest := helm.LatestOnly(refs)
+			byName := map[string][]helm.Ref{}
+			for _, r := range latest {
+				byName[r.Release] = append(byName[r.Release], r)
+			}
+			exists := map[string]bool{}
+			undecodable := 0
+			releaseExists := func(relNs, name string) bool {
+				key := relNs + "/" + name
+				if v, ok := exists[key]; ok {
+					return v
+				}
+				found := false
+				for _, r := range byName[name] {
+					// A cluster-scoped object without the namespace annotation can only be matched by name.
+					if relNs == "" || r.Namespace == relNs {
+						found = true
+						break
+					}
+					rel, err := c.Store.Load(r)
+					if err != nil {
+						slog.Debug("cannot decode release record", "namespace", r.Namespace, "object", r.Object, "error", err)
+						undecodable++
+						found = true // cannot tell, so do not call it lost
+						break
+					}
+					if rel.Namespace == relNs {
+						found = true
+						break
+					}
+				}
+				exists[key] = found
+				return found
 			}
 			progress, clear := o.progressFunc("resource kinds")
 			objs, warnings, err := c.Cluster.ListHelmManaged(cmd.Context(), ns, progress)
@@ -71,8 +105,7 @@ Exits with code 2 when lost resources are found.`,
 			res := lostResult{Releases: []lostRelease{}, Warnings: warnings}
 			byRelease := map[string]int{}
 			for _, m := range objs {
-				// A cluster-scoped object without the namespace annotation can only be matched by name.
-				if (m.ReleaseNamespace == "" && byName[m.ReleaseName]) || byNamespacedName[m.ReleaseNamespace+"/"+m.ReleaseName] {
+				if releaseExists(m.ReleaseNamespace, m.ReleaseName) {
 					continue
 				}
 				key := m.ReleaseNamespace + "/" + m.ReleaseName
@@ -83,6 +116,9 @@ Exits with code 2 when lost resources are found.`,
 					res.Releases = append(res.Releases, lostRelease{Release: m.ReleaseName, Namespace: m.ReleaseNamespace})
 				}
 				res.Releases[i].Resources = append(res.Releases[i].Resources, lostResource{Kind: m.Kind, Namespace: m.Namespace, Name: m.Name})
+			}
+			if undecodable > 0 {
+				res.Warnings = append(res.Warnings, fmt.Sprintf("%d release record(s) could not be decoded; objects of releases with those names are not reported", undecodable))
 			}
 			sort.Slice(res.Releases, func(i, j int) bool {
 				a, b := res.Releases[i], res.Releases[j]

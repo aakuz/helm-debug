@@ -130,3 +130,20 @@ func TestLostFoundNoProgressWhenDisabled(t *testing.T) {
 		t.Fatalf("unexpected stderr output: %q", stderr)
 	}
 }
+
+func TestLostFoundReleaseStoredInAnotherNamespace(t *testing.T) {
+	c := newCluster(t)
+	// helm -n infra list shows cert-manager/cert-manager: the records live in infra, the release belongs to cert-manager
+	c.releaseStoredIn("infra", "cert-manager", "cert-manager", 1, common.StatusSuperseded, simpleManifest, nil)
+	c.releaseStoredIn("infra", "cert-manager", "cert-manager", 2, common.StatusDeployed, simpleManifest, nil)
+	c.object("apps/v1", "Deployment", "cert-manager", "cert-manager", "cert-manager", "cert-manager")
+	c.object("rbac.authorization.k8s.io/v1", "ClusterRole", "", "cert-manager-controller", "cert-manager", "cert-manager")
+	// same release name, but the record belongs to another namespace
+	c.object("v1", "ConfigMap", "dev", "stray", "cert-manager", "dev")
+
+	out, err := run(t, c, "", "lost-found", "-A")
+	wantProblems(t, err, true)
+	if got := strings.Join(strings.Fields(out), " "); got != "RELEASE NAMESPACE RELEASE KIND NAMESPACE NAME dev cert-manager ConfigMap dev stray" {
+		t.Fatalf("unexpected output:\n%s", out)
+	}
+}

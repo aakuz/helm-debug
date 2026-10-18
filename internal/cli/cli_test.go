@@ -79,6 +79,13 @@ func (c *cluster) release(name, ns string, version int, status common.Status, ma
 
 func (c *cluster) releaseWithValues(name, ns string, version int, status common.Status, manifest string, values map[string]any, hooks ...*rspb.Hook) {
 	c.t.Helper()
+	c.releaseStoredIn(ns, name, ns, version, status, manifest, values, hooks...)
+}
+
+// releaseStoredIn keeps the record in storageNs while the release itself belongs to ns, as with `helm install --namespace ns`
+// under a client whose storage namespace differs.
+func (c *cluster) releaseStoredIn(storageNs, name, ns string, version int, status common.Status, manifest string, values map[string]any, hooks ...*rspb.Hook) {
+	c.t.Helper()
 	rel := &rspb.Release{
 		Name: name, Namespace: ns, Version: version, Manifest: manifest, Hooks: hooks, Config: values,
 		Info: &rspb.Info{
@@ -89,7 +96,7 @@ func (c *cluster) releaseWithValues(name, ns string, version int, status common.
 		Chart: &chart.Chart{Metadata: &chart.Metadata{Name: name, Version: fmt.Sprintf("1.%d.0", version), AppVersion: "2.0"}},
 	}
 	key := fmt.Sprintf("sh.helm.release.v1.%s.v%d", name, version)
-	if err := driver.NewSecrets(c.kube.CoreV1().Secrets(ns)).Create(key, rel); err != nil {
+	if err := driver.NewSecrets(c.kube.CoreV1().Secrets(storageNs)).Create(key, rel); err != nil {
 		c.t.Fatal(err)
 	}
 }
