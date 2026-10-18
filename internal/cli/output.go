@@ -19,6 +19,7 @@ const (
 	red    = "\033[31m"
 	green  = "\033[32m"
 	yellow = "\033[33m"
+	cyan   = "\033[36m"
 	reset  = "\033[0m"
 )
 
@@ -103,11 +104,11 @@ func (t *table) flush() {
 
 func statusColor(status string) string {
 	switch status {
-	case "deployed", "present", "ok":
+	case "deployed", "present", "ok", "in-sync", "added", "unchanged":
 		return green
-	case "failed", "absent", "error", "unknown-kind", "mismatch", "missing":
+	case "failed", "absent", "error", "unknown-kind", "mismatch", "missing", "removed":
 		return red
-	case "pending-install", "pending-upgrade", "pending-rollback", "uninstalling":
+	case "pending-install", "pending-upgrade", "pending-rollback", "uninstalling", "drifted", "changed":
 		return yellow
 	}
 	return ""

@@ -92,7 +92,7 @@ revisions differ.`,
 			if d := unifiedDiff(string(oldValues), string(newValues)); d != "" {
 				result.Values = diffValues{Status: diffChanged, Diff: d}
 			}
-			return o.print(result, func(w io.Writer) { printDiff(w, result) })
+			return o.print(result, func(w io.Writer) { printDiff(o, w, result) })
 		},
 	}
 }
@@ -372,7 +372,7 @@ func splitLines(s string) []string {
 	return strings.Split(strings.TrimSuffix(s, "\n"), "\n")
 }
 
-func printDiff(w io.Writer, result *diffResult) {
+func printDiff(o *Options, w io.Writer, result *diffResult) {
 	fmt.Fprintf(w, "Release %s/%s revisions %d -> %d\n", result.Namespace, result.Release, result.From, result.To)
 	if len(result.Manifest) == 0 && result.Values.Status == diffUnchanged {
 		fmt.Fprintln(w, "\nNo differences.")
@@ -385,7 +385,7 @@ func printDiff(w io.Writer, result *diffResult) {
 		t := newTable(w)
 		t.add("KIND", "NAMESPACE", "NAME", "STATUS")
 		for _, row := range result.Manifest {
-			t.add(row.Kind, row.Namespace, row.Name, row.Status)
+			t.add(row.Kind, row.Namespace, row.Name, o.paint(row.Status, statusColor(row.Status)))
 		}
 		t.flush()
 		for _, row := range result.Manifest {
@@ -393,7 +393,7 @@ func printDiff(w io.Writer, result *diffResult) {
 			if row.Namespace != "" {
 				ns = row.Namespace + "/"
 			}
-			fmt.Fprintf(w, "\n--- %s %s%s (%s)\n%s", row.Kind, ns, row.Name, row.Status, row.Diff)
+			fmt.Fprintf(w, "\n--- %s %s%s (%s)\n%s", row.Kind, ns, row.Name, o.paint(row.Status, statusColor(row.Status)), o.paintDiff(row.Diff))
 		}
 	}
 	fmt.Fprintln(w, "\nValues:")
@@ -401,5 +401,24 @@ func printDiff(w io.Writer, result *diffResult) {
 		fmt.Fprintln(w, "  No differences.")
 		return
 	}
-	fmt.Fprint(w, result.Values.Diff)
+	fmt.Fprint(w, o.paintDiff(result.Values.Diff))
+}
+
+// paintDiff colors hunk headers cyan, additions green and removals red.
+func (o *Options) paintDiff(text string) string {
+	if !o.colorEnabled() {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	for i, l := range lines {
+		switch {
+		case strings.HasPrefix(l, "@@"):
+			lines[i] = o.paint(l, cyan)
+		case strings.HasPrefix(l, "+"):
+			lines[i] = o.paint(l, green)
+		case strings.HasPrefix(l, "-"):
+			lines[i] = o.paint(l, red)
+		}
+	}
+	return strings.Join(lines, "\n")
 }

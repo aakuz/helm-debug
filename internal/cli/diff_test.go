@@ -284,3 +284,38 @@ func TestDiffExcludesHooks(t *testing.T) {
 		t.Fatalf("err=%v out=%s", err, out)
 	}
 }
+
+func TestDiffColor(t *testing.T) {
+	result := &diffResult{
+		Release: "api", Namespace: "prod", From: 1, To: 2,
+		Manifest: []diffObject{{Kind: "Deployment", Name: "api", Status: diffChanged, Diff: "@@ -1,1 +1,1 @@\n-replicas: 2\n+replicas: 3\n"}},
+		Values:   diffValues{Status: diffUnchanged},
+	}
+	render := func(color bool) string {
+		o := NewOptions()
+		o.Color = &color
+		var b strings.Builder
+		printDiff(o, &b, result)
+		return b.String()
+	}
+	colored := render(true)
+	for _, want := range []string{cyan + "@@ -1,1 +1,1 @@" + reset, red + "-replicas: 2" + reset, green + "+replicas: 3" + reset, yellow + "changed" + reset} {
+		if !strings.Contains(colored, want) {
+			t.Errorf("colored output lacks %q:\n%q", want, colored)
+		}
+	}
+	if plain := render(false); strings.Contains(plain, "\x1b") {
+		t.Errorf("plain output contains escapes: %q", plain)
+	}
+}
+
+func TestDriftStatusColor(t *testing.T) {
+	color := true
+	o := NewOptions()
+	o.Color = &color
+	var b strings.Builder
+	printDrift(o, &b, &driftResult{Release: "api", Namespace: "prod", Revision: 1, Resources: []driftRow{{Status: "drifted"}, {Status: "in-sync"}}})
+	if !strings.Contains(b.String(), yellow+"drifted"+reset) || !strings.Contains(b.String(), green+"in-sync"+reset) {
+		t.Errorf("drift statuses not colored: %q", b.String())
+	}
+}

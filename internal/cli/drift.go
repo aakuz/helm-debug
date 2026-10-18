@@ -47,7 +47,7 @@ Only field paths are printed, never values. Exits with code 2 for drift.`,
 			if err != nil {
 				return err
 			}
-			if err := o.print(result, func(w io.Writer) { printDrift(w, result) }); err != nil {
+			if err := o.print(result, func(w io.Writer) { printDrift(o, w, result) }); err != nil {
 				return err
 			}
 			var lookupErr error
@@ -125,12 +125,12 @@ func runDrift(cmd *cobra.Command, o *Options, c *Clients, name string) (*driftRe
 	return &driftResult{Release: rel.Name, Namespace: rel.Namespace, Revision: rel.Version, Resources: rows}, nil
 }
 
-func printDrift(w io.Writer, result *driftResult) {
+func printDrift(o *Options, w io.Writer, result *driftResult) {
 	fmt.Fprintf(w, "Release %s/%s revision %d\n\n", result.Namespace, result.Release, result.Revision)
 	t := newTable(w)
 	t.add("KIND", "NAMESPACE", "NAME", "STATUS", "CHANGED FIELDS")
 	for _, row := range result.Resources {
-		t.add(row.Kind, row.Namespace, row.Name, row.Status, strings.Join(row.Changes, ", "))
+		t.add(row.Kind, row.Namespace, row.Name, o.paint(row.Status, statusColor(row.Status)), strings.Join(row.Changes, ", "))
 	}
 	t.flush()
 	for _, row := range result.Resources {
