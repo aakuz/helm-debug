@@ -332,3 +332,94 @@ func TestHealthLogsValidationNamesTheFirstInvalidFlag(t *testing.T) {
 		}
 	}
 }
+
+func TestLogMemoryKeysAreSeparate(t *testing.T) {
+	logs := func(namespace string, l podLog) *healthResult {
+		return &healthResult{Workloads: []workloadHealth{{Namespace: namespace, Name: "web", Logs: []podLog{l}}}}
+	}
+	base := podLog{Pod: "web-0", Container: "main", Lines: []string{"a", "b"}, id: "c1", restarts: 1}
+
+	t.Run("previous and current run are different streams", func(t *testing.T) {
+		m := newLogMemory()
+		m.news(logs("prod", base))
+		cur := base
+		cur.Previous = true
+		if got := m.news(logs("prod", cur)).Workloads[0].Logs; len(got) != 1 || got[0].more {
+			t.Fatalf("want the previous-run log in full as a new stream, got %+v", got)
+		}
+	})
+
+	t.Run("same pod name in another namespace", func(t *testing.T) {
+		m := newLogMemory()
+		res := &healthResult{Workloads: []workloadHealth{
+			{Namespace: "prod", Name: "web", Logs: []podLog{base}},
+			{Namespace: "stage", Name: "web", Logs: []podLog{base}},
+		}}
+		out := m.news(res)
+		if len(out.Workloads[0].Logs) != 1 || len(out.Workloads[1].Logs) != 1 {
+			t.Fatalf("both namespaces must be shown in full: %+v", out.Workloads)
+		}
+	})
+
+	t.Run("a repeated read error is forgotten once the stream is gone", func(t *testing.T) {
+		failing := base
+		failing.Lines, failing.Error = nil, "pod is not available"
+		m := newLogMemory()
+		shown := func(res *healthResult) int { return len(m.news(res).Workloads[0].Logs) }
+		if shown(logs("prod", failing)) != 1 || shown(logs("prod", failing)) != 0 {
+			t.Fatal("the error is shown once while it lasts")
+		}
+		m.news(&healthResult{Workloads: []workloadHealth{{Namespace: "prod", Name: "web"}}}) // the pod is gone
+		if shown(logs("prod", failing)) != 1 {
+			t.Fatal("an error of a stream that came back is shown again")
+		}
+	})
+}
+
+func TestHealthWaitTailTreatsANewContainerIDAsANewRun(t *testing.T) {
+	tests := []struct {
+		name  string
+		flags []string
+		setup func(c *cluster)
+		pod   func(id string) string
+		log   string // the log key that is read, and the text expected twice
+		text  string
+	}{
+		{
+			name:  "attention pod (--logs)",
+			flags: []string{"--logs", "3"},
+			setup: func(c *cluster) { c.setLog("web-aaa/main!previous", "same crash\n") },
+			pod: func(id string) string {
+				return "apiVersion: v1\nkind: Pod\nmetadata: {name: web-aaa, namespace: prod, labels: {app: web}}\nstatus:\n  phase: Running\n  containerStatuses:\n  - {name: main, containerID: " + id + ", restartCount: 3, state: {waiting: {reason: CrashLoopBackOff}}}\n"
+			},
+			text: "same crash",
+		},
+		{
+			name:  "healthy pod (--all-logs)",
+			flags: []string{"--all-logs", "3"},
+			setup: func(c *cluster) { c.setLog("web-ok/main", "same output\n") },
+			pod: func(id string) string {
+				return "apiVersion: v1\nkind: Pod\nmetadata: {name: web-ok, namespace: prod, labels: {app: web}}\nstatus:\n  phase: Running\n  conditions: [{type: Ready, status: \"True\"}]\n  containerStatuses:\n  - {name: main, ready: true, containerID: " + id + ", restartCount: 0, state: {running: {startedAt: \"2026-10-18T10:00:00Z\"}}}\n"
+			},
+			text: "same output",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := healthCluster(t)
+			c.deployment("web", 1, 1, 2, 2, 1, 1)
+			c.statefulSet("db", 1, 1, 1)
+			c.yaml(tt.pod("containerd://one"))
+			tt.setup(c)
+			r := runWait(t, c, func(n int, cl *Clients) {
+				if n == 1 { // the pod was replaced: same name, same restart count, new container
+					setPod(t, cl, tt.pod("containerd://two"))
+				}
+			}, append([]string{"health", "web", "--wait", "--tail", "--timeout", "2s", "--interval", "2s"}, tt.flags...)...)
+			wantProblems(t, r.err, true)
+			if got := strings.Count(r.out, tt.text); got != 2 {
+				t.Fatalf("want the log of the new container shown again (2 prints), got %d:\n%s", got, r.out)
+			}
+		})
+	}
+}
