@@ -139,7 +139,8 @@ func TestHealthWaitTailUnchangedLogsPrintNothing(t *testing.T) {
 	c := recoveringCluster(t)
 	r := runWait(t, c, nil, "health", "web", "--wait", "--logs", "2", "--tail", "--timeout", "4s", "--interval", "2s")
 	wantProblems(t, r.err, true)
-	if strings.Count(r.out, "starting") != 1 || strings.Count(r.out, "Release prod/web") != 1 {
+	if strings.Count(r.out, "starting") != 1 || strings.Count(r.out, "Release prod/web") != 1 ||
+		strings.Count(r.out, "Logs of") != 1 || strings.Count(r.out, "] unhealthy") != 1 {
 		t.Fatalf("an unchanged state and log must print once:\n%s", r.out)
 	}
 }
@@ -176,6 +177,7 @@ func TestNewLines(t *testing.T) {
 		{"nothing new", []string{"a", "b"}, []string{"a", "b"}, nil},
 		{"appended", []string{"a", "b"}, []string{"a", "b", "c"}, []string{"c"}},
 		{"sliding window", []string{"a", "b", "c"}, []string{"b", "c", "d", "e"}, []string{"d", "e"}},
+		{"overlap of a single line", []string{"a", "b"}, []string{"b", "c"}, []string{"c"}},
 		{"no overlap prints everything", []string{"a", "b"}, []string{"x", "y"}, []string{"x", "y"}},
 		{"log restarted", []string{"a", "b", "c"}, []string{"a"}, []string{"a"}},
 		{"empty now", []string{"a"}, nil, nil},
@@ -187,5 +189,44 @@ func TestNewLines(t *testing.T) {
 				t.Fatalf("newLines(%q, %q) = %q, want %q", tt.prev, tt.cur, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHealthWaitTailWithAllLogsOnly(t *testing.T) {
+	c := recoveringCluster(t)
+	c.readyPod("web-ok", "web")
+	c.setLog("web-ok/main", "ok line\n")
+	r := runWait(t, c, func(n int, _ *Clients) {
+		if n == 1 {
+			c.setLog("web-ok/main", "ok line\nok line 2\n")
+		}
+	}, "health", "web", "--wait", "--all-logs", "5", "--tail", "--timeout", "2s", "--interval", "2s")
+	wantProblems(t, r.err, true)
+	if !strings.Contains(r.out, "Logs of web-ok (container main):") || !strings.Contains(r.out, "Logs of web-ok (container main, new lines):") ||
+		strings.Count(r.out, "ok line\n") != 1 || strings.Count(r.out, "ok line 2") != 1 {
+		t.Fatalf("--tail works with --all-logs alone:\n%s", r.out)
+	}
+}
+
+func TestHealthWaitTailShowsAReadErrorOncePerStreak(t *testing.T) {
+	c := recoveringCluster(t)
+	delete(c.logs, "web-aaa/main!previous")
+	c.logErrors = map[string]string{"web-aaa/main!previous": "pod is not available"}
+	r := runWait(t, c, func(n int, _ *Clients) {
+		switch n {
+		case 2: // reads work again
+			delete(c.logErrors, "web-aaa/main!previous")
+			c.setLog("web-aaa/main!previous", "back\n")
+		case 4: // and fail again: a new streak is reported
+			delete(c.logs, "web-aaa/main!previous")
+			c.logErrors["web-aaa/main!previous"] = "pod is not available"
+		}
+	}, "health", "web", "--wait", "--logs", "5", "--tail", "--timeout", "10s", "--interval", "2s")
+	wantProblems(t, r.err, true)
+	if got := strings.Count(r.out, "unavailable: pod is not available"); got != 2 {
+		t.Fatalf("want the error once per streak (2), got %d:\n%s", got, r.out)
+	}
+	if strings.Count(r.out, "back") != 1 {
+		t.Fatalf("the recovered log must be shown once:\n%s", r.out)
 	}
 }

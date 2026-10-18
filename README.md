@@ -283,11 +283,18 @@ a `warning: release is <status>` line), when a workload is not fully rolled out,
 read (status `error`), or when a pod with problems is listed. Warning events alone do not cause 2. Errors
 that stop the command (for example, no such release or no access to the release records) exit 1.
 
-`--logs N` (default `0`, off) adds the last N log lines of the containers that explain a problem; N must
-be between 0 and 1000, otherwise the command fails. Logs are read through the `pods/log` subresource, a
-read-only GET capped at 1 MiB per container, one pod at a time per workload. They are shown for the pods
-listed under "Pods with problems" and for the pods that are not Ready in unhealthy workloads. A container
-that has restarted and is currently waiting (for example `CrashLoopBackOff`) shows the log of its previous
+Within one snapshot the output comes in this order: the release line, the workloads table, the pods with
+problems, the warning events and, last, the logs, which are the longest part.
+
+`--logs N` (default `0`, off) adds the last N log lines of the containers that explain a problem, and
+`--all-logs M` (default `0`, off) adds the last M lines of every started container of every pod, healthy
+pods included. N and M must be between 0 and 1000, otherwise the command fails. The two are independent
+and can be combined: the container that explains a problem in a pod that needs attention (listed under
+"Pods with problems", or not Ready in an unhealthy workload) gets N lines, and every other started
+container gets M lines. With `--all-logs` alone, the pods that need attention get M lines too; with
+`--logs` alone, only the pods that need attention are read. Logs are read through the `pods/log`
+subresource, a read-only GET capped at 1 MiB per container, one pod at a time per workload, so both
+flags need the same `get` on `pods/log`. A container that has restarted and is currently waiting (for example `CrashLoopBackOff`) shows the log of its previous
 run; a container that is running or has just exited shows its current log. Containers that never
 started (`ImagePullBackOff`, `ErrImagePull`, `InvalidImageName`, `CreateContainerConfigError`) have no
 log and are skipped. Each log is printed under `Logs of POD (container NAME[, previous run]):`, indented
@@ -299,19 +306,31 @@ cut with an ellipsis. The same cleaning applies to log read error texts and to w
 messages. In `-o json` and `-o yaml` the logs are a `logs` array per workload (`pod`, `container`,
 `previous`, `lines`, `error`), and problem pods gain a `container` field.
 
-`--wait` polls until the release is healthy: the release status is not a problem status, every workload is
+`--wait` (`-w`) polls until the release is healthy: the release status is not a problem status, every workload is
 rolled out and no pod is listed, which is the condition under which exit code 0 is returned without it.
 `--interval` (default `2s`) is the time between polls and `--timeout` (default `5m`) the total wait; both
 must be positive, and passing either without `--wait` is an error (`--timeout requires --wait`). In table
 mode the state is printed on the first poll and again whenever it changes: a status or count change, a
 restart count change, a new or changed problem pod, a new kind of warning event, or a changed log line when
-`--logs` is set. A repeat of a known warning event (higher count or newer time, same object, reason and
+`--logs` or `--all-logs` is set. A repeat of a known warning event (higher count or newer time, same object, reason and
 message) does not print a new snapshot. Each print starts with a `[HH:MM:SS +ELAPSED] healthy|unhealthy`
 line, and polls without a change print nothing. On success the command exits 0. When the timeout passes
 first it prints `timed out after DURATION, the release is still unhealthy` and exits 2. Ctrl-C stops the
 command like any other tool (the shell reports 130). Errors reading the release record (unknown release,
 storage errors) abort the wait with exit 1; per-workload lookup errors are retried until the timeout. With
 `-o json` or `-o yaml` nothing is streamed; only the final snapshot is printed.
+
+`--tail` (with `--wait`, and with `--logs` or `--all-logs`; otherwise the command fails with `--tail requires
+--wait` or `--tail requires --logs or --all-logs`) follows the logs like `tail -f`. The first poll prints the
+logs in full. Later polls print only the log lines that were not shown before, under headings such as
+`Logs of POD (container NAME, previous run, new lines):`. A poll where only the logs changed prints just the
+`[HH:MM:SS +ELAPSED] healthy|unhealthy` line and the new lines, without repeating the table; a poll where the
+state changed prints the state without the logs, followed by the new lines; a poll with nothing new prints
+nothing. Without `--tail` every update repeats the whole tail. New lines are found by matching the end of the
+previously shown window with the start of the new one; when they do not overlap (the log moved on by more
+than the window, or the container restarted) the whole new window is printed. In tail mode a read error is
+shown once, and again only when its text changes. With `-o json` or `-o yaml`, `--tail` has no effect: the
+final snapshot carries the full tail.
 
 ```console
 $ helm-debug health backend -n prod --wait --logs 5
@@ -336,6 +355,32 @@ Release prod/backend revision 2 (deployed)
 
 KIND        NAMESPACE  NAME     READY  STATUS   DETAILS
 Deployment  prod       backend  3/3    healthy  -
+```
+
+With `--tail` the first poll prints the logs in full, and each later poll prints only the new lines:
+
+```console
+$ helm-debug health backend -n prod -w --logs 10 --tail
+[12:00:00 +0s] unhealthy
+Release prod/backend revision 1 (deployed)
+
+KIND        NAMESPACE  NAME     READY  STATUS     DETAILS
+Deployment  prod       backend  1/3    unhealthy  1 of 3 available
+
+Pods with problems:
+POD          PHASE    REASON            RESTARTS
+backend-aaa  Running  CrashLoopBackOff  7
+
+Logs of backend-aaa (container main, previous run):
+  starting
+  panic: no database
+
+[12:00:02 +2s] unhealthy
+
+Logs of backend-aaa (container main, previous run, new lines):
+  retry 1
+
+...
 ```
 
 ## Output and colors
@@ -380,7 +425,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 | `history` | `list` on secrets (or configmaps) in the release namespace |
 | `find` | `get` on the object; `list` + `get` on secrets (or configmaps) cluster-wide for the scan |
 | `stuck` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
-| `health` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the Deployments and StatefulSets, `list` on pods and events in their namespaces, `get` on `pods/log` with `--logs` |
+| `health` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the Deployments and StatefulSets, `list` on pods and events in their namespaces, `get` on `pods/log` with `--logs` or `--all-logs` |
 
 ## Development
 

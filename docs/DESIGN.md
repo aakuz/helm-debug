@@ -129,7 +129,7 @@ window) are matched by involved object: the workload, its pods, and ReplicaSets 
 (`healthSignature`), printing only when it differs. The state is compared as JSON without the events; the
 events are compared by object, reason and message only, so a repeat of a known warning (higher count or
 newer time) does not print. A new kind of warning, a status or count change, a restart count change or a
-changed log line does. The deadline is the start time plus `--timeout`, read from the injectable clock
+changed log line does (with `--tail` the signature is taken without logs, see below). The deadline is the start time plus `--timeout`, read from the injectable clock
 (`Options.Now`), and pauses go through `Options.Sleep`; the last pause is cut to the time left, so the
 final poll lands on the deadline. Only table output streams; json and yaml print the final snapshot.
 Errors reading the release record abort the wait; per-workload lookup errors leave the workload unhealthy
@@ -140,10 +140,22 @@ shows its current log. A not-ready pod of an unhealthy workload contributes its 
 container. Containers that never started are skipped. Log requests run one pod at a time per workload,
 so the number of simultaneous log requests stays within `--concurrency`. Logs are read through the
 `pods/log` subresource (a GET, capped at 1 MiB per container), so the tool stays read-only (ADR-0003).
-`--logs` accepts 0 to 1000; anything else is an error. Lines are untrusted output: escape sequences
+`--logs` and `--all-logs` each accept 0 to 1000; anything else is an error. Lines are untrusted output: escape sequences
 (CSI, OSC, DCS/SOS/PM/APC strings), control characters other than tab and Unicode format characters
 (bidi overrides, zero-width characters) are removed, invalid UTF-8 is replaced, and lines are cut at 500
 characters. The same cleaning applies to log read error texts and to warning event reasons and messages.
+
+Each log target carries its own line count (`logTarget.lines`), which keeps `--logs` and `--all-logs`
+independent: the failing container of a pod that needs attention gets `--logs` lines (or `--all-logs` when
+`--logs` is off), and with `--all-logs` every other started container of every pod gets `--all-logs` lines.
+Targets with zero lines are dropped.
+
+`--tail` keeps, per container, the window of lines already printed (`logMemory`, keyed by namespace, pod,
+container and previous-run flag). The change signature is taken from the snapshot without logs
+(`withoutLogs`), so a log change alone prints only the state line and the new lines. `newLines` returns the
+lines after the longest suffix of the old window that is also a prefix of the new window. When there is no
+overlap (the log moved on by more than the window, or the container restarted) the whole new window is
+printed. A read error is remembered per container and printed again only when its text changes.
 
 ## Invocation modes
 
