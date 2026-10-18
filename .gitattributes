@@ -1,0 +1,2 @@
+# Golden files and scripts must keep LF on every OS (Windows checkouts would turn them into CRLF).
+* text=auto eol=lf
