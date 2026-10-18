@@ -435,8 +435,8 @@ func logTargetOf(p corev1.Pod, problem *podHealth, workloadUnhealthy bool) (logT
 			}
 		}
 	}
-	if cs == nil {
-		return logTarget{}, false
+	if cs == nil || cs.State.Waiting != nil && cs.RestartCount == 0 {
+		return logTarget{}, false // no container, or one that never started and has no log
 	}
 	return logTarget{pod: p.Name, container: cs.Name, previous: cs.RestartCount > 0 && cs.State.Running == nil}, true
 }

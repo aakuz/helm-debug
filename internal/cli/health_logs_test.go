@@ -121,6 +121,65 @@ func TestHealthLogsSkipsNotReadyPodsOfHealthyWorkload(t *testing.T) {
 	}
 }
 
+// pod adds a pod from raw status YAML.
+func (c *cluster) podWithStatus(name, app, status string) {
+	c.t.Helper()
+	c.yaml(fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata: {name: %s, namespace: prod, labels: {app: %s}}
+status:
+%s`, name, app, status))
+}
+
+func TestHealthLogsRestartedButRunningContainerReadsCurrentLog(t *testing.T) {
+	c := healthCluster(t)
+	c.deployment("web", 1, 1, 2, 2, 1, 1)
+	c.statefulSet("db", 1, 1, 1)
+	c.podWithStatus("web-aaa", "web", `  phase: Running
+  conditions: [{type: Ready, status: "False"}]
+  containerStatuses:
+  - {name: main, ready: false, restartCount: 3, state: {running: {startedAt: "2026-10-18T11:00:00Z"}}}
+`)
+	c.setLog("web-aaa/main", "current run\n")
+	out, err := run(t, c, "prod", "health", "web", "--logs", "1")
+	wantProblems(t, err, true)
+	if len(c.logCalls) != 1 || c.logCalls[0] != "prod/web-aaa/main" || !strings.Contains(out, "current run") || strings.Contains(out, "previous run") {
+		t.Fatalf("want the current log of a running container, got %v:\n%s", c.logCalls, out)
+	}
+}
+
+func TestHealthLogsPodWithoutReadyConditionCountsAsNotReady(t *testing.T) {
+	c := healthCluster(t)
+	c.deployment("web", 1, 1, 2, 2, 1, 1)
+	c.statefulSet("db", 1, 1, 1)
+	c.podWithStatus("web-aaa", "web", `  phase: Running
+  containerStatuses:
+  - {name: main, ready: false, restartCount: 0, state: {running: {startedAt: "2026-10-18T11:00:00Z"}}}
+`)
+	c.setLog("web-aaa/main", "booting\n")
+	_, err := run(t, c, "prod", "health", "web", "--logs", "1")
+	wantProblems(t, err, true)
+	if len(c.logCalls) != 1 {
+		t.Fatalf("want one log request, got %v", c.logCalls)
+	}
+}
+
+func TestHealthLogsSkipsContainersThatNeverStarted(t *testing.T) {
+	c := healthCluster(t)
+	c.deployment("web", 1, 1, 2, 2, 1, 1)
+	c.statefulSet("db", 1, 1, 1)
+	c.podWithStatus("web-creating", "web", `  phase: Pending
+  conditions: [{type: Ready, status: "False"}]
+  containerStatuses:
+  - {name: main, ready: false, restartCount: 0, state: {waiting: {reason: ContainerCreating}}}
+`)
+	out, err := run(t, c, "prod", "health", "web", "--logs", "5")
+	wantProblems(t, err, true)
+	if len(c.logCalls) != 0 || strings.Contains(out, "Logs of") || strings.Contains(out, "unavailable") {
+		t.Fatalf("a container that never started has no log; got %v:\n%s", c.logCalls, out)
+	}
+}
+
 func TestHealthLogsError(t *testing.T) {
 	c := logsCluster(t)
 	delete(c.logs, "web-aaa/main!previous")
@@ -140,6 +199,8 @@ func TestHealthLogsNegative(t *testing.T) {
 
 func TestSanitizeLog(t *testing.T) {
 	long := strings.Repeat("x", maxLogLine+50)
+	exact := strings.Repeat("y", maxLogLine)
+	oneOver := strings.Repeat("z", maxLogLine+1)
 	tests := []struct {
 		name, in string
 		want     []string
@@ -151,6 +212,9 @@ func TestSanitizeLog(t *testing.T) {
 		{"control characters dropped, tab kept", "a\x00b\x07c\td\x7f", []string{"abc\td"}},
 		{"carriage return rewrites dropped", "progress 10%\rprogress 100%", []string{"progress 10%progress 100%"}},
 		{"long line truncated", long, []string{long[:maxLogLine] + "…"}},
+		{"line of exactly the limit is kept", exact, []string{exact}},
+		{"one rune over the limit is cut", oneOver, []string{oneOver[:maxLogLine] + "…"}},
+		{"multibyte runes counted as runes", strings.Repeat("я", maxLogLine), []string{strings.Repeat("я", maxLogLine)}},
 		{"empty", "", nil},
 	}
 	for _, tt := range tests {
