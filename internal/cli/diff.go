@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"sort"
@@ -108,10 +109,17 @@ type objectKey struct{ apiVersion, kind, namespace, name string }
 
 func parseObjects(manifest string) (map[objectKey]map[string]any, error) {
 	objects := map[objectKey]map[string]any{}
-	for _, doc := range releaseutil.SplitManifests(manifest) {
+	docs := releaseutil.SplitManifests(manifest)
+	names := make([]string, 0, len(docs))
+	for name := range docs {
+		names = append(names, name)
+	}
+	sort.Sort(releaseutil.BySplitManifestsOrder(names))
+	for i, name := range names {
 		var obj map[string]any
-		if err := yaml.Unmarshal([]byte(doc), &obj); err != nil {
-			return nil, fmt.Errorf("parsing release manifest: %w", err)
+		// The parser error is dropped on purpose: it can quote Secret content.
+		if err := yaml.Unmarshal([]byte(docs[name]), &obj); err != nil {
+			return nil, fmt.Errorf("parsing release manifest: invalid YAML in document %d", i+1)
 		}
 		key := objectKey{apiVersion: str(obj["apiVersion"]), kind: str(obj["kind"])}
 		if md, ok := obj["metadata"].(map[string]any); ok {
@@ -207,15 +215,16 @@ func diffManifests(oldManifest, newManifest string) ([]diffObject, error) {
 // <masked:new>, any other value becomes <masked>, so no secret material is
 // printed but a change is still visible.
 func maskSecret(oldObj, newObj map[string]any) {
+	oldEff, newEff := effectiveSecretData(oldObj), effectiveSecretData(newObj)
+	changed := map[string]bool{}
+	for k, ov := range oldEff {
+		if nv, ok := newEff[k]; ok && nv != ov {
+			changed[k] = true
+		}
+	}
 	for _, section := range []string{"data", "stringData"} {
 		oldData, _ := oldObj[section].(map[string]any)
 		newData, _ := newObj[section].(map[string]any)
-		changed := map[string]bool{}
-		for k, ov := range oldData {
-			if nv, ok := newData[k]; ok && fmt.Sprint(nv) != fmt.Sprint(ov) {
-				changed[k] = true
-			}
-		}
 		for k := range oldData {
 			oldData[k] = "<masked>"
 			if changed[k] {
@@ -231,6 +240,21 @@ func maskSecret(oldObj, newObj map[string]any) {
 	}
 }
 
+// effectiveSecretData returns the base64 payload per key as the API would
+// store it: stringData entries override data entries.
+func effectiveSecretData(obj map[string]any) map[string]string {
+	eff := map[string]string{}
+	data, _ := obj["data"].(map[string]any)
+	for k, v := range data {
+		eff[k] = fmt.Sprint(v)
+	}
+	stringData, _ := obj["stringData"].(map[string]any)
+	for k, v := range stringData {
+		eff[k] = base64.StdEncoding.EncodeToString([]byte(fmt.Sprint(v)))
+	}
+	return eff
+}
+
 type diffLine struct {
 	op   byte // ' ', '-' or '+'
 	text string
@@ -239,7 +263,17 @@ type diffLine struct {
 // unifiedDiff returns a unified-style diff of two texts with hunk headers, or
 // "" when they are equal.
 func unifiedDiff(oldText, newText string) string {
-	a, b := splitLines(oldText), splitLines(newText)
+	fullA, fullB := splitLines(oldText), splitLines(newText)
+	// Trim the common prefix and suffix so the LCS table only covers the middle.
+	prefix := 0
+	for prefix < len(fullA) && prefix < len(fullB) && fullA[prefix] == fullB[prefix] {
+		prefix++
+	}
+	suffix := 0
+	for suffix < len(fullA)-prefix && suffix < len(fullB)-prefix && fullA[len(fullA)-1-suffix] == fullB[len(fullB)-1-suffix] {
+		suffix++
+	}
+	a, b := fullA[prefix:len(fullA)-suffix], fullB[prefix:len(fullB)-suffix]
 	// Longest common subsequence table.
 	lcs := make([][]int, len(a)+1)
 	for i := range lcs {
@@ -254,7 +288,10 @@ func unifiedDiff(oldText, newText string) string {
 			}
 		}
 	}
-	var lines []diffLine
+	lines := make([]diffLine, 0, len(fullA)+len(fullB)-prefix-suffix)
+	for _, t := range fullA[:prefix] {
+		lines = append(lines, diffLine{' ', t})
+	}
 	i, j := 0, 0
 	for i < len(a) || j < len(b) {
 		switch {
@@ -269,6 +306,9 @@ func unifiedDiff(oldText, newText string) string {
 			lines = append(lines, diffLine{'+', b[j]})
 			j++
 		}
+	}
+	for _, t := range fullA[len(fullA)-suffix:] {
+		lines = append(lines, diffLine{' ', t})
 	}
 	var out strings.Builder
 	for start := 0; start < len(lines); {

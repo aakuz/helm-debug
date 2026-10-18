@@ -3,8 +3,10 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"helm.sh/helm/v4/pkg/release/common"
 	rspb "helm.sh/helm/v4/pkg/release/v1"
@@ -185,6 +187,91 @@ stringData:
 	}
 	if strings.Contains(out, "-  kept") || strings.Contains(out, "+  kept") || strings.Contains(out, "token") && (strings.Contains(out, "-  token") || strings.Contains(out, "+  token")) {
 		t.Fatalf("unchanged secret key reported as changed:\n%s", out)
+	}
+}
+
+func TestDiffMasksSecretMovedBetweenDataAndStringData(t *testing.T) {
+	c := newCluster(t)
+	c.release("api", "prod", 1, common.StatusSuperseded, `apiVersion: v1
+kind: Secret
+metadata:
+  name: creds
+data:
+  password: b2xkLXNlY3JldA==
+  same: c2FtZS12YWx1ZQ==
+`)
+	c.release("api", "prod", 2, common.StatusDeployed, `apiVersion: v1
+kind: Secret
+metadata:
+  name: creds
+stringData:
+  password: new-secret
+  same: same-value
+`)
+	out, err := run(t, c, "prod", "diff", "api", "1", "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"b2xkLXNlY3JldA", "new-secret", "c2FtZS12YWx1ZQ", "same-value"} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("output leaks %q:\n%s", secret, out)
+		}
+	}
+	for _, want := range []string{"-  password: <masked:old>", "+  password: <masked:new>", "-  same: <masked>", "+  same: <masked>"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "same: <masked:") {
+		t.Fatalf("equivalent value reported as changed:\n%s", out)
+	}
+}
+
+func TestDiffParseErrorDoesNotLeakSecret(t *testing.T) {
+	c := newCluster(t)
+	c.release("api", "prod", 1, common.StatusSuperseded, diffManifestV1)
+	c.release("api", "prod", 2, common.StatusDeployed, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ok
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: creds
+data:
+  password: hunter2-TOPSECRET
+ bad: [unclosed
+`)
+	_, err := run(t, c, "prod", "diff", "api", "1", "2")
+	if err == nil {
+		t.Fatal("want parse error")
+	}
+	if strings.Contains(err.Error(), "TOPSECRET") || strings.Contains(err.Error(), "hunter2") {
+		t.Fatalf("error leaks secret content: %v", err)
+	}
+	if !strings.Contains(err.Error(), "invalid YAML in document 2") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestUnifiedDiffLargeMostlyIdentical(t *testing.T) {
+	const n = 30000
+	lines := make([]string, n)
+	for i := range lines {
+		lines[i] = "line " + strconv.Itoa(i)
+	}
+	oldText := strings.Join(lines, "\n") + "\n"
+	lines[15000] = "changed"
+	newText := strings.Join(lines, "\n") + "\n"
+	start := time.Now()
+	got := unifiedDiff(oldText, newText)
+	if time.Since(start) > 2*time.Second {
+		t.Fatalf("unifiedDiff too slow: %v", time.Since(start))
+	}
+	want := "@@ -14998,7 +14998,7 @@\n line 14997\n line 14998\n line 14999\n-line 15000\n+changed\n line 15001\n line 15002\n line 15003\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
 }
 
