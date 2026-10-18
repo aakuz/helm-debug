@@ -123,7 +123,10 @@ data:
 					t.Fatalf("missing %q: %s", want, out)
 				}
 			}
-			for _, unwanted := range []string{"sensitive-live-value", "expected", "backend-migrate", "old"} {
+			if !strings.Contains(out, "sensitive-live-value") || !strings.Contains(out, "expected") {
+				t.Fatalf("values missing: %s", out)
+			}
+			for _, unwanted := range []string{"backend-migrate", "old"} {
 				if strings.Contains(out, unwanted) {
 					t.Fatalf("unwanted %q: %s", unwanted, out)
 				}

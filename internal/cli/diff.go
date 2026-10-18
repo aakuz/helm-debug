@@ -51,8 +51,8 @@ func newDiffCommand(o *Options) *cobra.Command {
 		Long: `Compare the stored manifests and user-supplied values of two revisions.
 Objects are matched by apiVersion, kind, namespace and name and reported as
 added, removed or changed. Hooks are excluded. Secret data and stringData
-values are masked: a changed value is shown as <masked:old> and <masked:new>.
-User values are shown as stored. Exits with code 0 whether or not the
+values are masked unless --show-secrets is set: a changed value is shown as
+<masked:old> and <masked:new>. User values are shown as stored. Exits with code 0 whether or not the
 revisions differ.`,
 		Args: cobra.ExactArgs(3),
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -77,7 +77,7 @@ revisions differ.`,
 				return err
 			}
 			result := &diffResult{Release: b.Name, Namespace: b.Namespace, From: a.Version, To: b.Version}
-			if result.Manifest, err = diffManifests(a.Manifest, b.Manifest); err != nil {
+			if result.Manifest, err = diffManifests(a.Manifest, b.Manifest, o.ShowSecrets); err != nil {
 				return err
 			}
 			oldValues, err := yaml.Marshal(a.Config)
@@ -138,7 +138,7 @@ func str(v any) string {
 	return s
 }
 
-func diffManifests(oldManifest, newManifest string) ([]diffObject, error) {
+func diffManifests(oldManifest, newManifest string, showSecrets bool) ([]diffObject, error) {
 	oldObjects, err := parseObjects(oldManifest)
 	if err != nil {
 		return nil, err
@@ -175,7 +175,7 @@ func diffManifests(oldManifest, newManifest string) ([]diffObject, error) {
 	for _, k := range sorted {
 		oldObj, hadOld := oldObjects[k]
 		newObj, hadNew := newObjects[k]
-		if k.kind == "Secret" {
+		if k.kind == "Secret" && !showSecrets {
 			maskSecret(oldObj, newObj)
 		}
 		oldText, newText := "", ""

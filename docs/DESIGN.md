@@ -50,8 +50,21 @@ It recursively compares declared map keys, ignoring live-only keys so API defaul
 additions do not create noise. ConfigMap/Secret payload maps are compared in full so added data
 keys are detected; other live-only additions are not detected. Known built-in resource quantity
 fields use Kubernetes quantity comparison to avoid false drift from canonicalization. Lists are
-compared in order and by length. No values are included in output, so Secret values stay private.
-Unknown kinds and failed GETs return execution errors rather than an in-sync verdict.
+compared in order and by length. Unknown kinds and failed GETs return execution errors rather than
+an in-sync verdict.
+
+For every drifted object `drift` also prints a unified diff (the same `unifiedDiff`/`paintDiff` as
+`diff`, `--- Kind ns/name (status)` blocks after the status table; a `diff` string per row in
+json/yaml). `kube.Project` builds it from the same normalization as `ChangedPaths`: the live object
+is projected onto the declared structure (live-only keys dropped, except in ConfigMap/Secret payload
+maps; equal-length lists projected element by element, other lists kept whole; quantities equal by
+value take the declared string). `drift --values` instead prints the live values at the drifted
+paths as YAML, one document per object, nested from the JSON pointers (a path inside a list yields
+the whole live list, missing fields become `# removed:` comments). It does not map manifest fields
+to chart values keys, since the manifest is already rendered; it is ignored for json/yaml output.
+Values are shown, but Secret `data` values are masked (`<masked>`, `<masked:old>` for the declared
+value, `<masked:new>` for the live one) unless the global `--show-secrets` flag is set. This
+reveals more than the earlier path-only output, but still only reads (ADR-0003 is unaffected).
 
 ## Diff
 
@@ -62,7 +75,8 @@ line diff of the object YAML (sorted keys, 3 lines of context; a small built-in 
 diff library is in go.mod). Hooks are excluded, as in `drift`. Secret `data`/`stringData` values are
 masked in both revisions before diffing: `<masked>` normally, `<masked:old>`/`<masked:new>` for a
 key whose value differs, so a change is visible without printing anything or exposing a hash.
-User values (`Release.Config`) are diffed as stored YAML, unmasked. A difference is information,
+Masking is skipped with `--show-secrets`. User values (`Release.Config`) are diffed as stored
+YAML, unmasked. A difference is information,
 so the exit code is 0; only errors (unknown revision, bad arguments) exit 1.
 
 ## Ownership

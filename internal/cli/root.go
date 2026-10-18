@@ -42,6 +42,8 @@ type Options struct {
 	Output      string
 	Verbose     bool
 	Concurrency int
+	// ShowSecrets prints Secret data values instead of masking them.
+	ShowSecrets bool
 
 	Out, ErrOut io.Writer
 	Now         func() time.Time
@@ -170,6 +172,7 @@ func NewRootCommand(o *Options) *cobra.Command {
 	pf.StringVarP(&o.Output, "output", "o", "table", "Output format: table, json or yaml")
 	pf.BoolVarP(&o.Verbose, "verbose", "v", o.Verbose, "Verbose logging to stderr (also enabled by HELM_DEBUG=true)")
 	pf.IntVar(&o.Concurrency, "concurrency", o.Concurrency, "Number of parallel API requests")
+	pf.BoolVar(&o.ShowSecrets, "show-secrets", false, "Show Secret data values instead of masking them")
 
 	root.AddCommand(
 		newResourcesCommand(o),
