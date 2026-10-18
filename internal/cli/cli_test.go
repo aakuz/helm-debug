@@ -61,8 +61,13 @@ func newCluster(t *testing.T) *cluster {
 
 func (c *cluster) release(name, ns string, version int, status common.Status, manifest string, hooks ...*rspb.Hook) {
 	c.t.Helper()
+	c.releaseWithValues(name, ns, version, status, manifest, nil, hooks...)
+}
+
+func (c *cluster) releaseWithValues(name, ns string, version int, status common.Status, manifest string, values map[string]any, hooks ...*rspb.Hook) {
+	c.t.Helper()
 	rel := &rspb.Release{
-		Name: name, Namespace: ns, Version: version, Manifest: manifest, Hooks: hooks,
+		Name: name, Namespace: ns, Version: version, Manifest: manifest, Hooks: hooks, Config: values,
 		Info: &rspb.Info{
 			Status:       status,
 			LastDeployed: now.Add(-time.Duration(10-version) * time.Hour),

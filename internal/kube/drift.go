@@ -17,46 +17,6 @@ import (
 // Live-only fields are ignored except in ConfigMap/Secret payload maps, which
 // have no API defaults. Kubernetes resource quantities are compared by value.
 func ChangedPaths(expected, actual map[string]any) []string {
-	// Normalize numeric representations from YAML and dynamic clients alike.
-	normalize := func(v map[string]any) map[string]any {
-		b, _ := json.Marshal(v)
-		var out map[string]any
-		_ = json.Unmarshal(b, &out)
-		delete(out, "status")
-		if out["apiVersion"] == "v1" && (out["kind"] == "Secret" || out["kind"] == "ConfigMap") {
-			keys := []string{"data"}
-			if out["kind"] == "ConfigMap" {
-				keys = append(keys, "binaryData")
-			}
-			for _, key := range keys {
-				if out[key] == nil {
-					out[key] = map[string]any{}
-				}
-			}
-		}
-		// The API stores Secret stringData as base64 data, with stringData winning.
-		if out["apiVersion"] == "v1" && out["kind"] == "Secret" {
-			if stringData, ok := out["stringData"].(map[string]any); ok {
-				data, _ := out["data"].(map[string]any)
-				if data == nil {
-					data = map[string]any{}
-				}
-				for key, value := range stringData {
-					if text, ok := value.(string); ok {
-						data[key] = base64.StdEncoding.EncodeToString([]byte(text))
-					}
-				}
-				out["data"] = data
-				delete(out, "stringData")
-			}
-		}
-		if metadata, ok := out["metadata"].(map[string]any); ok {
-			for _, key := range []string{"managedFields", "resourceVersion", "uid", "generation", "creationTimestamp", "deletionTimestamp", "deletionGracePeriodSeconds", "selfLink"} {
-				delete(metadata, key)
-			}
-		}
-		return out
-	}
 	var paths []string
 	var compare func(any, any, string)
 	compare = func(want, got any, path string) {
@@ -68,7 +28,7 @@ func ChangedPaths(expected, actual map[string]any) []string {
 				return
 			}
 			// Payload maps have no API defaults: added keys are drift too.
-			if expected["apiVersion"] == "v1" && (expected["kind"] == "ConfigMap" || expected["kind"] == "Secret") && (path == "/data" || path == "/binaryData") {
+			if payloadMap(expected, path) {
 				for key := range g {
 					if _, exists := w[key]; !exists {
 						paths = append(paths, pointerChild(path, key))
@@ -106,9 +66,112 @@ func ChangedPaths(expected, actual map[string]any) []string {
 			}
 		}
 	}
-	compare(normalize(expected), normalize(actual), "")
+	compare(Normalize(expected), Normalize(actual), "")
 	sort.Strings(paths)
 	return paths
+}
+
+// Project returns the normalized expected object and the live object reduced to
+// the declared structure, so the two can be diffed line by line. It follows the
+// same rules as ChangedPaths: live-only keys are dropped except in ConfigMap and
+// Secret payload maps, lists of different length are kept whole (equal-length
+// lists are projected element by element) and quantities equal by value take
+// the declared string.
+func Project(expected, actual map[string]any) (want, got map[string]any) {
+	want = Normalize(expected)
+	var project func(w, g any, path string) any
+	project = func(w, g any, path string) any {
+		switch wv := w.(type) {
+		case map[string]any:
+			gv, ok := g.(map[string]any)
+			if !ok {
+				return g
+			}
+			out := map[string]any{}
+			if payloadMap(expected, path) {
+				for key, value := range gv {
+					out[key] = value
+				}
+			}
+			for key, value := range wv {
+				if live, exists := gv[key]; exists {
+					out[key] = project(value, live, pointerChild(path, key))
+				}
+			}
+			return out
+		case []any:
+			gv, ok := g.([]any)
+			if !ok || len(wv) != len(gv) {
+				return g
+			}
+			out := make([]any, len(wv))
+			for i := range wv {
+				out[i] = project(wv[i], gv[i], path+"/"+strconv.Itoa(i))
+			}
+			return out
+		default:
+			if quantityField(expected, path) {
+				wq, we := resource.ParseQuantity(fmt.Sprint(w))
+				gq, ge := resource.ParseQuantity(fmt.Sprint(g))
+				if we == nil && ge == nil && wq.Cmp(gq) == 0 {
+					return w
+				}
+			}
+			return g
+		}
+	}
+	got, _ = project(want, Normalize(actual), "").(map[string]any)
+	return want, got
+}
+
+// payloadMap reports whether path is a ConfigMap/Secret payload map, which has
+// no API defaults, so keys added to it count as drift.
+func payloadMap(obj map[string]any, path string) bool {
+	return obj["apiVersion"] == "v1" && (obj["kind"] == "ConfigMap" || obj["kind"] == "Secret") && (path == "/data" || path == "/binaryData")
+}
+
+// Normalize returns a JSON-typed copy of an object without status or server
+// metadata, with Secret stringData converted to data, so that stored manifests
+// and live objects compare alike.
+func Normalize(v map[string]any) map[string]any {
+	// Normalize numeric representations from YAML and dynamic clients alike.
+	b, _ := json.Marshal(v)
+	var out map[string]any
+	_ = json.Unmarshal(b, &out)
+	delete(out, "status")
+	if out["apiVersion"] == "v1" && (out["kind"] == "Secret" || out["kind"] == "ConfigMap") {
+		keys := []string{"data"}
+		if out["kind"] == "ConfigMap" {
+			keys = append(keys, "binaryData")
+		}
+		for _, key := range keys {
+			if out[key] == nil {
+				out[key] = map[string]any{}
+			}
+		}
+	}
+	// The API stores Secret stringData as base64 data, with stringData winning.
+	if out["apiVersion"] == "v1" && out["kind"] == "Secret" {
+		if stringData, ok := out["stringData"].(map[string]any); ok {
+			data, _ := out["data"].(map[string]any)
+			if data == nil {
+				data = map[string]any{}
+			}
+			for key, value := range stringData {
+				if text, ok := value.(string); ok {
+					data[key] = base64.StdEncoding.EncodeToString([]byte(text))
+				}
+			}
+			out["data"] = data
+			delete(out, "stringData")
+		}
+	}
+	if metadata, ok := out["metadata"].(map[string]any); ok {
+		for _, key := range []string{"managedFields", "resourceVersion", "uid", "generation", "creationTimestamp", "deletionTimestamp", "deletionGracePeriodSeconds", "selfLink"} {
+			delete(metadata, key)
+		}
+	}
+	return out
 }
 
 var containerQuantity = regexp.MustCompile(`^/(containers|initContainers|ephemeralContainers)/[0-9]+/resources/(requests|limits)/[^/]+$`)

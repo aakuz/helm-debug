@@ -6,6 +6,7 @@ Debug Helm releases by reading their records straight from the cluster storage
 - **`resources`** – which objects a release revision declares (hooks included), whether they exist
   and whether they carry the ownership metadata Helm needs to manage them.
 - **`drift`** – which declared fields differ between the latest stored manifest and live objects.
+- **`diff`** – rendered manifest and user-values differences between two revisions.
 - **`find`** – which release(s) declare a given object.
 - **`history`** – revisions with status, chart/app version and the stored failure reason.
 - **`stuck`** – releases stuck in `pending-install/upgrade/rollback` and the command that unlocks them.
@@ -67,6 +68,7 @@ All commands accept the usual kubectl flags (`--context`, `--kubeconfig`, `-n`, 
 | `--storage secret\|configmap` | Helm storage driver (default `$HELM_DRIVER`, else `secret`) |
 | `--concurrency N` | Parallel API requests (default 8) |
 | `-v, --verbose` | Debug logging to stderr (also `HELM_DEBUG=true`) |
+| `--show-secrets` | Show Secret `data` values in `drift` and `diff` instead of masking them (default off) |
 
 When run as `helm debug`, Helm passes its global flags (`-n`, `--kube-context`, `--kubeconfig`,
 `--kube-token`, …) through `HELM_*` environment variables. `helm-debug` picks them up as defaults
@@ -104,12 +106,32 @@ Release prod/backend revision 2
 
 KIND        NAMESPACE  NAME     STATUS   CHANGED FIELDS
 Deployment  prod       backend  drifted  /spec/replicas
+
+--- Deployment prod/backend (drifted)
+@@ -4,4 +4,4 @@
+   name: backend
+   namespace: prod
+ spec:
+-  replicas: 2
++  replicas: 3
 ```
 
 Compares the latest stored manifest with live objects using read-only GET requests. Missing
 objects and changed or removed declared fields count as drift. Changed fields are reported as
-JSON pointers; values are never printed, including Secret values. `-o json` and `-o yaml` expose
-the same resource statuses and changed paths.
+JSON pointers, and each drifted object is followed by a unified diff of the declared (expected)
+fields against the live ones, built with the same rules as the comparison below (live-only fields
+do not show up). Secret `data` values are masked as in `diff` (`<masked>`, `<masked:old>` for the
+declared value, `<masked:new>` for the live one) unless `--show-secrets` is set. `-o json` and
+`-o yaml` expose the resource statuses, changed paths and a `diff` string for each drifted row.
+
+`drift --values` prints, instead of the table, a values-like YAML of the live values at the drifted
+paths: one document per drifted object, separated by `---` and preceded by a `# Kind namespace/name`
+comment, with a `# removed: /path` comment for fields missing from the live object. A drifted path
+inside a list includes the whole live list. Secret values print as `<masked>` unless
+`--show-secrets` is set, in which case they appear base64-encoded as stored (`stringData` is folded
+into `data`). Absent objects and lookup errors appear as `# absent:` / `# error:` comments. The output is not mapped to chart values keys: the manifest is already
+rendered, so you map the fields to your values by hand. The flag is ignored with `-o json` or
+`-o yaml`, which already carry the data. The exit code is unchanged.
 
 Status and server-managed metadata (such as `managedFields`, `resourceVersion`, UID and timestamps)
 are ignored. Fields present only on live objects are ignored to avoid reporting API defaults and
@@ -123,6 +145,41 @@ commonly deletes them after execution. This compares stored intent, not a newly 
 
 Exit code is 0 when in sync, 2 for drift, and 1 for lookup or manifest errors (including unknown
 kinds). An execution error takes precedence over drift when both occur.
+
+### diff
+
+```console
+$ helm-debug diff backend 1 2 -n prod
+Release prod/backend revisions 1 -> 2
+
+Manifest:
+KIND        NAMESPACE  NAME     STATUS
+Deployment  -          backend  changed
+
+--- Deployment backend (changed)
+@@ -3,4 +3,4 @@
+ metadata:
+   name: backend
+ spec:
+-  replicas: 2
++  replicas: 3
+
+Values:
+@@ -1,2 +1,2 @@
+ image: backend
+-replicas: 2
++replicas: 3
+```
+
+Compares the stored manifests and the user-supplied values (`helm get values`) of two revisions.
+Objects are matched by apiVersion, kind, namespace and name and reported as `added`, `removed` or
+`changed`, with a unified-style diff of each object's YAML. Hooks are excluded, as in `drift`.
+Secret `data` and `stringData` values are masked unless `--show-secrets` is set: unchanged values
+print as `<masked>`, and a value that changed prints as `<masked:old>` and `<masked:new>`. User values are shown as stored, so do not
+keep secrets in them. `-o json` and `-o yaml` return the objects with their status and diff text,
+and the values diff. Only storage records are read, never live objects.
+
+Exit code is 0 whether or not the revisions differ; unknown revisions and other errors exit 1.
 
 ### find
 
@@ -165,7 +222,7 @@ may still be in progress.
 
 | Code | Meaning |
 |---|---|
-| 0 | No problems |
+| 0 | No problems (`diff` always exits 0 when it succeeds) |
 | 1 | Execution error (no access, release not found, bad flags, …) |
 | 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`) |
 
@@ -175,6 +232,7 @@ may still be in progress.
 |---|---|
 | `resources` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on every declared object |
 | `drift` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on every declared object |
+| `diff` | `list` on secrets (or configmaps) in the release namespace |
 | `history` | `list` on secrets (or configmaps) in the release namespace |
 | `find` | `get` on the object; `list` + `get` on secrets (or configmaps) cluster-wide for the scan |
 | `stuck` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |

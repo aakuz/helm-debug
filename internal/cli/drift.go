@@ -19,7 +19,12 @@ type driftRow struct {
 	helm.Object
 	Status  string   `json:"status"`
 	Changes []string `json:"changes,omitempty"`
+	Diff    string   `json:"diff,omitempty"`
 	Error   string   `json:"error,omitempty"`
+
+	// values and removed feed `drift --values`; they are not part of the structured output.
+	values  map[string]any
+	removed []string
 }
 
 type driftResult struct {
@@ -30,13 +35,21 @@ type driftResult struct {
 }
 
 func newDriftCommand(o *Options) *cobra.Command {
-	return &cobra.Command{
+	var values bool
+	cmd := &cobra.Command{
 		Use:   "drift RELEASE",
 		Short: "Compare the latest stored manifest with live objects",
 		Long: `Compare fields declared by the latest release manifest with live objects.
 Server metadata, status and live-only fields (defaults and controller additions)
 are ignored. Lists are compared in order. Hooks are excluded.
-Only field paths are printed, never values. Exits with code 2 for drift.`,
+Each drifted object is followed by a unified diff of the declared (expected) and
+live fields. Secret data values are masked unless --show-secrets is set; they
+are then shown base64-encoded as stored (stringData is folded into data).
+With --values the table is replaced by a values-like YAML document of the live
+values at the drifted paths, one per drifted object. It is not mapped to chart
+values keys: the manifest is already rendered, so map the fields by hand. Fields
+that were removed from the live object are listed in "# removed:" comments.
+--values is ignored with -o json or -o yaml. Exits with code 2 for drift.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := o.NewClients(o)
@@ -47,7 +60,13 @@ Only field paths are printed, never values. Exits with code 2 for drift.`,
 			if err != nil {
 				return err
 			}
-			if err := o.print(result, func(w io.Writer) { printDrift(w, result) }); err != nil {
+			if err := o.print(result, func(w io.Writer) {
+				if values {
+					printDriftValues(w, result)
+					return
+				}
+				printDrift(o, w, result)
+			}); err != nil {
 				return err
 			}
 			var lookupErr error
@@ -67,6 +86,8 @@ Only field paths are printed, never values. Exits with code 2 for drift.`,
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&values, "values", false, "Print the live values at drifted paths as YAML instead of the table (table output only)")
+	return cmd
 }
 
 func runDrift(cmd *cobra.Command, o *Options, c *Clients, name string) (*driftResult, error) {
@@ -118,6 +139,7 @@ func runDrift(cmd *cobra.Command, o *Options, c *Clients, name string) (*driftRe
 			row.Status = "in-sync"
 			if len(row.Changes) > 0 {
 				row.Status = "drifted"
+				driftDetails(o, &row, obj.Object, live.Object.Object)
 			}
 		}
 		rows[i] = row
@@ -125,17 +147,121 @@ func runDrift(cmd *cobra.Command, o *Options, c *Clients, name string) (*driftRe
 	return &driftResult{Release: rel.Name, Namespace: rel.Namespace, Revision: rel.Version, Resources: rows}, nil
 }
 
-func printDrift(w io.Writer, result *driftResult) {
+func printDrift(o *Options, w io.Writer, result *driftResult) {
 	fmt.Fprintf(w, "Release %s/%s revision %d\n\n", result.Namespace, result.Release, result.Revision)
 	t := newTable(w)
 	t.add("KIND", "NAMESPACE", "NAME", "STATUS", "CHANGED FIELDS")
 	for _, row := range result.Resources {
-		t.add(row.Kind, row.Namespace, row.Name, row.Status, strings.Join(row.Changes, ", "))
+		t.add(row.Kind, row.Namespace, o.paint(row.Name, name), o.paint(row.Status, statusColor(row.Status)), strings.Join(row.Changes, ", "))
 	}
 	t.flush()
+	for _, row := range result.Resources {
+		if row.Diff == "" {
+			continue
+		}
+		ns := ""
+		if row.Namespace != "" {
+			ns = row.Namespace + "/"
+		}
+		fmt.Fprintf(w, "\n--- %s %s%s (%s)\n%s", row.Kind, ns, o.paint(row.Name, name), o.paint(row.Status, statusColor(row.Status)), o.paintDiff(row.Diff))
+	}
 	for _, row := range result.Resources {
 		if row.Error != "" {
 			fmt.Fprintf(w, "\nerror: %s/%s: %s\n", row.Kind, row.Name, row.Error)
 		}
+	}
+}
+
+// driftDetails fills the diff and the live values of a drifted row. Secret data
+// is masked unless --show-secrets is set.
+func driftDetails(o *Options, row *driftRow, expected, live map[string]any) {
+	want, got := kube.Project(expected, live)
+	secret := row.Kind == "Secret" && !o.ShowSecrets
+	row.values, row.removed = liveValues(kube.Normalize(live), row.Changes)
+	if data, ok := row.values["data"].(map[string]any); ok && secret {
+		for k := range data {
+			data[k] = "<masked>"
+		}
+	}
+	if secret {
+		maskSecret(want, got)
+	}
+	wantText, err := yaml.Marshal(want)
+	if err == nil {
+		var gotText []byte
+		if gotText, err = yaml.Marshal(got); err == nil {
+			row.Diff = unifiedDiff(string(wantText), string(gotText))
+		}
+	}
+	if err != nil {
+		row.Error = err.Error()
+	}
+}
+
+// liveValues builds nested maps holding the live value at every changed JSON
+// pointer. A path through a list yields the whole list. Paths that no longer
+// exist in the live object are returned separately.
+func liveValues(live map[string]any, paths []string) (values map[string]any, removed []string) {
+	values = map[string]any{}
+	for _, path := range paths {
+		node, dst := live, values
+		tokens := strings.Split(strings.TrimPrefix(path, "/"), "/")
+		for i, token := range tokens {
+			key := strings.ReplaceAll(strings.ReplaceAll(token, "~1", "/"), "~0", "~")
+			child, exists := node[key]
+			if !exists {
+				removed = append(removed, path)
+				break
+			}
+			next, isMap := child.(map[string]any)
+			if i == len(tokens)-1 || !isMap {
+				dst[key] = child
+				break
+			}
+			sub, ok := dst[key].(map[string]any)
+			if !ok {
+				sub = map[string]any{}
+				dst[key] = sub
+			}
+			node, dst = next, sub
+		}
+	}
+	return values, removed
+}
+
+func printDriftValues(w io.Writer, result *driftResult) {
+	first := true
+	for _, row := range result.Resources {
+		drifted := row.Status == "drifted"
+		if !drifted && row.Status != kube.StatusAbsent && row.Error == "" {
+			continue
+		}
+		if !first {
+			fmt.Fprintln(w, "---")
+		}
+		first = false
+		ref := row.Kind + " " + row.Name
+		if row.Namespace != "" {
+			ref = row.Kind + " " + row.Namespace + "/" + row.Name
+		}
+		if !drifted {
+			if row.Error != "" {
+				fmt.Fprintf(w, "# error: %s: %s\n", ref, row.Error)
+			} else {
+				fmt.Fprintf(w, "# absent: %s\n", ref)
+			}
+			continue
+		}
+		fmt.Fprintf(w, "# %s\n", ref)
+		for _, path := range row.removed {
+			fmt.Fprintf(w, "# removed: %s\n", path)
+		}
+		if len(row.values) > 0 {
+			b, _ := yaml.Marshal(row.values)
+			fmt.Fprint(w, string(b))
+		}
+	}
+	if first {
+		fmt.Fprintln(w, "# No drifted objects")
 	}
 }
