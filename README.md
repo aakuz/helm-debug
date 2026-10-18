@@ -128,7 +128,8 @@ declared value, `<masked:new>` for the live one) unless `--show-secrets` is set.
 paths: one document per drifted object, separated by `---` and preceded by a `# Kind namespace/name`
 comment, with a `# removed: /path` comment for fields missing from the live object. A drifted path
 inside a list includes the whole live list. Secret values print as `<masked>` unless
-`--show-secrets` is set. The output is not mapped to chart values keys: the manifest is already
+`--show-secrets` is set, in which case they appear base64-encoded as stored (`stringData` is folded
+into `data`). Absent objects and lookup errors appear as `# absent:` / `# error:` comments. The output is not mapped to chart values keys: the manifest is already
 rendered, so you map the fields to your values by hand. The flag is ignored with `-o json` or
 `-o yaml`, which already carry the data. The exit code is unchanged.
 

@@ -65,6 +65,8 @@ to chart values keys, since the manifest is already rendered; it is ignored for 
 Values are shown, but Secret `data` values are masked (`<masked>`, `<masked:old>` for the declared
 value, `<masked:new>` for the live one) unless the global `--show-secrets` flag is set. This
 reveals more than the earlier path-only output, but still only reads (ADR-0003 is unaffected).
+With `--show-secrets`, Secret values appear base64-encoded as stored (`stringData` is folded into `data`).
+In `--values` mode, absent objects and lookup errors are emitted as `# absent:` / `# error:` comments.
 
 ## Diff
 

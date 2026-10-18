@@ -172,7 +172,7 @@ func NewRootCommand(o *Options) *cobra.Command {
 	pf.StringVarP(&o.Output, "output", "o", "table", "Output format: table, json or yaml")
 	pf.BoolVarP(&o.Verbose, "verbose", "v", o.Verbose, "Verbose logging to stderr (also enabled by HELM_DEBUG=true)")
 	pf.IntVar(&o.Concurrency, "concurrency", o.Concurrency, "Number of parallel API requests")
-	pf.BoolVar(&o.ShowSecrets, "show-secrets", false, "Show Secret data values instead of masking them")
+	pf.BoolVar(&o.ShowSecrets, "show-secrets", false, "Show Secret data values instead of masking them (base64-encoded as stored; stringData is folded into data)")
 
 	root.AddCommand(
 		newResourcesCommand(o),

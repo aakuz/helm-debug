@@ -43,7 +43,8 @@ func newDriftCommand(o *Options) *cobra.Command {
 Server metadata, status and live-only fields (defaults and controller additions)
 are ignored. Lists are compared in order. Hooks are excluded.
 Each drifted object is followed by a unified diff of the declared (expected) and
-live fields. Secret data values are masked unless --show-secrets is set.
+live fields. Secret data values are masked unless --show-secrets is set; they
+are then shown base64-encoded as stored (stringData is folded into data).
 With --values the table is replaced by a values-like YAML document of the live
 values at the drifted paths, one per drifted object. It is not mapped to chart
 values keys: the manifest is already rendered, so map the fields by hand. Fields
@@ -231,7 +232,8 @@ func liveValues(live map[string]any, paths []string) (values map[string]any, rem
 func printDriftValues(w io.Writer, result *driftResult) {
 	first := true
 	for _, row := range result.Resources {
-		if row.Status != "drifted" {
+		drifted := row.Status == "drifted"
+		if !drifted && row.Status != kube.StatusAbsent && row.Error == "" {
 			continue
 		}
 		if !first {
@@ -241,6 +243,14 @@ func printDriftValues(w io.Writer, result *driftResult) {
 		ref := row.Kind + " " + row.Name
 		if row.Namespace != "" {
 			ref = row.Kind + " " + row.Namespace + "/" + row.Name
+		}
+		if !drifted {
+			if row.Error != "" {
+				fmt.Fprintf(w, "# error: %s: %s\n", ref, row.Error)
+			} else {
+				fmt.Fprintf(w, "# absent: %s\n", ref)
+			}
+			continue
 		}
 		fmt.Fprintf(w, "# %s\n", ref)
 		for _, path := range row.removed {

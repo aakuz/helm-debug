@@ -258,6 +258,97 @@ func TestDriftDiffColorHighlightsName(t *testing.T) {
 	}
 }
 
+func TestDriftValuesReportsAbsentAndUnknownKind(t *testing.T) {
+	c := newCluster(t)
+	c.release("api", "prod", 1, common.StatusDeployed, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gone
+data:
+  k: v
+---
+apiVersion: example.com/v1
+kind: Widget
+metadata:
+  name: w
+`)
+	out, err := run(t, c, "prod", "drift", "api", "--values")
+	if err == nil {
+		t.Fatal("want lookup error for unknown kind")
+	}
+	if !strings.Contains(out, "# absent: ConfigMap prod/gone\n") || !strings.Contains(out, "---\n# error: Widget w:") {
+		t.Fatalf("got:\n%s", out)
+	}
+	if strings.Contains(out, "No drifted objects") {
+		t.Fatalf("unexpected placeholder:\n%s", out)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line != "---" && !strings.HasPrefix(line, "# ") {
+			t.Fatalf("non-comment line %q in:\n%s", line, out)
+		}
+	}
+}
+
+func TestDriftValuesListPathHoldsWholeList(t *testing.T) {
+	c := newCluster(t)
+	c.release("api", "prod", 1, common.StatusDeployed, `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  template:
+    spec:
+      containers:
+      - name: api
+        image: api:v1
+`)
+	c.live = append(c.live, &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1", "kind": "Deployment",
+		"metadata": map[string]any{"name": "api", "namespace": "prod"},
+		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{
+			map[string]any{"name": "api", "image": "api:v2"},
+			map[string]any{"name": "sidecar", "image": "side:v1"},
+		}}}},
+	}})
+	out, err := run(t, c, "prod", "drift", "api", "--values")
+	wantProblems(t, err, true)
+	want := `# Deployment prod/api
+spec:
+  template:
+    spec:
+      containers:
+      - image: api:v2
+        name: api
+      - image: side:v1
+        name: sidecar
+`
+	if out != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", out, want)
+	}
+}
+
+func TestDriftValuesKeyWithSlashAndTilde(t *testing.T) {
+	c := newCluster(t)
+	c.release("api", "prod", 1, common.StatusDeployed, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cfg
+data:
+  "a/b~c": old
+`)
+	c.live = append(c.live, &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1", "kind": "ConfigMap",
+		"metadata": map[string]any{"name": "cfg", "namespace": "prod"},
+		"data":     map[string]any{"a/b~c": "new"},
+	}})
+	out, err := run(t, c, "prod", "drift", "api", "--values")
+	wantProblems(t, err, true)
+	want := "# ConfigMap prod/cfg\ndata:\n  a/b~c: new\n"
+	if out != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", out, want)
+	}
+}
+
 func TestDiffShowSecrets(t *testing.T) {
 	c := newCluster(t)
 	c.release("api", "prod", 1, common.StatusSuperseded, "apiVersion: v1\nkind: Secret\nmetadata:\n  name: s\ndata:\n  k: "+b64("one")+"\n")
