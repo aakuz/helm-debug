@@ -128,9 +128,19 @@ var workloadGVR = map[string]schema.GroupVersionResource{
 	"StatefulSet": {Group: "apps", Version: "v1", Resource: "statefulsets"},
 }
 
+// healthOptions are the flags that shape one run of the health command.
+type healthOptions struct {
+	revision int
+	logLines int  // lines of log per container; 0 reads no logs
+	allLogs  bool // read every started container of every pod, not only the ones that need attention
+	tail     bool // with --wait: print only log lines that were not shown before
+
+	timeout, interval time.Duration
+}
+
 func newHealthCommand(o *Options) *cobra.Command {
-	var revision, logLines int
-	var wait bool
+	var revision, logLines, allLogs int
+	var wait, tail bool
 	var timeout, interval time.Duration
 	cmd := &cobra.Command{
 		Use:   "health RELEASE",
@@ -138,20 +148,35 @@ func newHealthCommand(o *Options) *cobra.Command {
 		Long: `Check the rollout status of the Deployments and StatefulSets declared by a release
 revision, list their pods that crash or cannot pull an image, and show the warning events of
 the last hour for these workloads and pods. With --logs N it also shows the last N log lines of
-the pods that crash, fail to start or are not ready. Nothing is changed.
+the pods that crash, fail to start or are not ready; --all-logs N shows them for every container of
+every pod. Nothing is changed.
 
-With --wait it polls until the release is healthy, printing the state again whenever it changes
-(including the log lines when --logs is set), and exits with code 2 if --timeout passes first.
+With --wait (-w) it polls until the release is healthy, printing the state again whenever it changes
+(including the log lines when --logs or --all-logs is set), and exits with code 2 if --timeout passes
+first. Add --tail to print only the log lines that were not shown before, like tail -f.
 With -o json or -o yaml only the final state is printed.
 
 Exits with code 2 when a workload is not fully rolled out or absent, a pod is crashing, or the
 release itself is pending, uninstalling or failed.`,
 		Example: `  helm-debug health backend -n prod
+  helm-debug health backend -w --logs 20
+  helm-debug health backend -w --all-logs 10 --tail
   helm-debug health backend -o json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if logLines < 0 || logLines > maxLogs {
-				return fmt.Errorf("--logs must be between 0 and %d", maxLogs)
+			for name, n := range map[string]int{"logs": logLines, "all-logs": allLogs} {
+				if n < 0 || n > maxLogs {
+					return fmt.Errorf("--%s must be between 0 and %d", name, maxLogs)
+				}
+			}
+			if logLines > 0 && allLogs > 0 {
+				return fmt.Errorf("--logs and --all-logs cannot be used together")
+			}
+			if tail && !wait {
+				return fmt.Errorf("--tail requires --wait")
+			}
+			if tail && logLines == 0 && allLogs == 0 {
+				return fmt.Errorf("--tail requires --logs or --all-logs")
 			}
 			for _, f := range []string{"timeout", "interval"} {
 				if !wait && cmd.Flags().Changed(f) {
@@ -168,10 +193,11 @@ release itself is pending, uninstalling or failed.`,
 			if err != nil {
 				return err
 			}
+			opts := healthOptions{revision: revision, logLines: max(logLines, allLogs), allLogs: allLogs > 0, tail: tail, timeout: timeout, interval: interval}
 			if wait {
-				return waitHealth(cmd, o, c, args[0], revision, logLines, timeout, interval)
+				return waitHealth(cmd, o, c, args[0], opts)
 			}
-			res, err := runHealth(cmd, o, c, args[0], revision, logLines)
+			res, err := runHealth(cmd, o, c, args[0], opts)
 			if err != nil {
 				return err
 			}
@@ -185,29 +211,42 @@ release itself is pending, uninstalling or failed.`,
 		},
 	}
 	cmd.Flags().IntVarP(&revision, "revision", "r", 0, "Release revision to inspect (default: latest)")
-	cmd.Flags().BoolVar(&wait, "wait", false, "Poll until the release is healthy, printing every change of state")
+	cmd.Flags().BoolVarP(&wait, "wait", "w", false, "Poll until the release is healthy, printing every change of state")
 	cmd.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "With --wait: give up after this long and exit with code 2")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "With --wait: time between polls")
 	cmd.Flags().IntVar(&logLines, "logs", 0, "Show the last N log lines of problem and not-ready pods (0 = off)")
+	cmd.Flags().IntVar(&allLogs, "all-logs", 0, "Show the last N log lines of every container of every pod (0 = off)")
+	cmd.Flags().BoolVar(&tail, "tail", false, "With --wait and --logs/--all-logs: print only log lines not shown before")
 	return cmd
 }
 
 // waitHealth polls the release until it is healthy or the timeout passes. In table mode it prints the
 // state at the first poll and again whenever it changes; in json or yaml mode only the final state.
-func waitHealth(cmd *cobra.Command, o *Options, c *Clients, name string, revision, logLines int, timeout, interval time.Duration) error {
+// With opts.tail, log lines that were already shown are not printed again, and a poll where only the
+// logs changed prints just the new lines.
+func waitHealth(cmd *cobra.Command, o *Options, c *Clients, name string, opts healthOptions) error {
 	start := o.Now()
-	deadline := start.Add(timeout)
+	deadline := start.Add(opts.timeout)
 	table := o.Output == "" || o.Output == "table"
+	var seen *logMemory
+	if opts.tail {
+		seen = newLogMemory()
+	}
 	var last []byte
 	for {
-		res, err := runHealth(cmd, o, c, name, revision, logLines)
+		res, err := runHealth(cmd, o, c, name, opts)
 		if err != nil {
 			return err
 		}
 		ok := !res.problems()
 		now := o.Now()
 		if table {
-			if sig := healthSignature(res); !bytes.Equal(sig, last) {
+			sig, fresh := healthSignature(res), res
+			if seen != nil {
+				sig, fresh = healthSignature(withoutLogs(res)), seen.news(res)
+			}
+			changed := !bytes.Equal(sig, last)
+			if changed || seen != nil && hasLogs(fresh) {
 				if last != nil {
 					fmt.Fprintln(o.Out)
 				}
@@ -216,13 +255,24 @@ func waitHealth(cmd *cobra.Command, o *Options, c *Clients, name string, revisio
 					state = o.paint(healthy, statusColor(healthy))
 				}
 				fmt.Fprintf(o.Out, "[%s +%s] %s\n", now.Format("15:04:05"), formatAge(now.Sub(start)), state)
-				printHealth(o, o.Out, res)
+				if seen == nil {
+					printHealth(o, o.Out, res)
+				} else {
+					if changed {
+						printHealthState(o, o.Out, fresh)
+					}
+					suffix := ""
+					if last != nil {
+						suffix = ", new lines"
+					}
+					printLogs(o, o.Out, fresh, suffix)
+				}
 				last = sig
 			}
 		}
 		if ok || !now.Before(deadline) {
 			if table && !ok {
-				fmt.Fprintf(o.Out, "\n[%s +%s] timed out after %s, the release is still unhealthy\n", now.Format("15:04:05"), formatAge(now.Sub(start)), timeout)
+				fmt.Fprintf(o.Out, "\n[%s +%s] timed out after %s, the release is still unhealthy\n", now.Format("15:04:05"), formatAge(now.Sub(start)), opts.timeout)
 			} else if !table {
 				if err := o.print(res, nil); err != nil {
 					return err
@@ -233,7 +283,7 @@ func waitHealth(cmd *cobra.Command, o *Options, c *Clients, name string, revisio
 			}
 			return ErrProblems
 		}
-		if err := o.Sleep(cmd.Context(), min(interval, deadline.Sub(now))); err != nil {
+		if err := o.Sleep(cmd.Context(), min(opts.interval, deadline.Sub(now))); err != nil {
 			return err
 		}
 	}
@@ -266,8 +316,8 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func runHealth(cmd *cobra.Command, o *Options, c *Clients, name string, revision, logLines int) (*healthResult, error) {
-	rel, err := c.Store.Revision(name, c.Namespace, revision)
+func runHealth(cmd *cobra.Command, o *Options, c *Clients, name string, opts healthOptions) (*healthResult, error) {
+	rel, err := c.Store.Revision(name, c.Namespace, opts.revision)
 	if err != nil {
 		return nil, err
 	}
@@ -334,12 +384,10 @@ func runHealth(cmd *cobra.Command, o *Options, c *Clients, name string, revision
 			if ph != nil {
 				w.Pods = append(w.Pods, *ph)
 			}
-			if t, ok := logTargetOf(p, ph, w.Status == unhealthy); ok {
-				targets = append(targets, t)
-			}
+			targets = append(targets, logTargetsOf(p, ph, w.Status == unhealthy, opts.allLogs)...)
 		}
-		if logLines > 0 && c.Logs != nil {
-			w.Logs = readLogs(cmd, c, w.Namespace, targets, logLines)
+		if opts.logLines > 0 && c.Logs != nil {
+			w.Logs = readLogs(cmd, c, w.Namespace, targets, opts.logLines)
 		}
 	})
 
@@ -436,70 +484,6 @@ func podProblem(p corev1.Pod) *podHealth {
 	return ph
 }
 
-// logTarget is the container whose log explains why a pod needs attention.
-type logTarget struct {
-	pod, container string
-	previous       bool
-}
-
-// logTargetOf picks the container to read logs from: the failing container of a problem pod, or the
-// first container that is not ready in a not-ready pod of an unhealthy workload.
-func logTargetOf(p corev1.Pod, problem *podHealth, workloadUnhealthy bool) (logTarget, bool) {
-	statuses := append(append([]corev1.ContainerStatus{}, p.Status.InitContainerStatuses...), p.Status.ContainerStatuses...)
-	var cs *corev1.ContainerStatus
-	switch {
-	case problem != nil:
-		if noLogs[problem.Reason] {
-			return logTarget{}, false
-		}
-		for i := range statuses {
-			if w := statuses[i].State.Waiting; w != nil && w.Reason == problem.Reason {
-				cs = &statuses[i]
-				break
-			}
-		}
-		if cs == nil && len(statuses) > 0 {
-			cs = &statuses[0]
-		}
-	case workloadUnhealthy && !podReady(p):
-		for i := range statuses {
-			if !statuses[i].Ready {
-				cs = &statuses[i]
-				break
-			}
-		}
-	}
-	if cs == nil || cs.State.Waiting != nil && cs.RestartCount == 0 {
-		return logTarget{}, false // no container, or one that never started and has no log
-	}
-	return logTarget{pod: p.Name, container: cs.Name, previous: cs.RestartCount > 0 && cs.State.Waiting != nil}, true
-}
-
-func podReady(p corev1.Pod) bool {
-	for _, c := range p.Status.Conditions {
-		if c.Type == corev1.PodReady {
-			return c.Status == corev1.ConditionTrue
-		}
-	}
-	return false
-}
-
-// readLogs reads the targets one by one: workloads are already read in parallel, so this keeps the
-// number of simultaneous log requests within --concurrency.
-func readLogs(cmd *cobra.Command, c *Clients, namespace string, targets []logTarget, tail int) []podLog {
-	logs := make([]podLog, len(targets))
-	for i, t := range targets {
-		logs[i] = podLog{Pod: t.pod, Container: t.container, Previous: t.previous}
-		text, err := c.Logs(cmd.Context(), namespace, t.pod, t.container, int64(tail), t.previous)
-		if err != nil {
-			logs[i].Error = cleanLine(err.Error())
-			continue
-		}
-		logs[i].Lines = sanitizeLog(text)
-	}
-	return logs
-}
-
 // warningEvents returns recent Warning events about the workloads, their ReplicaSets and their pods.
 func warningEvents(cmd *cobra.Command, c *Clients, workloads []workloadHealth, pods [][]corev1.Pod, now time.Time) ([]healthEvent, string) {
 	type key struct{ namespace, kind, name string }
@@ -562,7 +546,14 @@ func eventTime(ev corev1.Event) time.Time {
 	return ev.CreationTimestamp.Time
 }
 
+// printHealth prints the state of the release followed by the logs of its pods.
 func printHealth(o *Options, w io.Writer, res *healthResult) {
+	printHealthState(o, w, res)
+	printLogs(o, w, res, "")
+}
+
+// printHealthState prints the release, its workloads, problem pods and warning events.
+func printHealthState(o *Options, w io.Writer, res *healthResult) {
 	fmt.Fprintf(w, "Release %s/%s revision %d (%s)\n\n", res.Namespace, res.Release, res.Revision, o.paint(res.Status, statusColor(res.Status)))
 	if releaseProblem(res.Status) {
 		fmt.Fprintf(w, "%s release is %s, so its workloads may not reflect the latest revision yet\n\n", o.paint("warning:", yellow), res.Status)
@@ -595,25 +586,6 @@ func printHealth(o *Options, w io.Writer, res *healthResult) {
 	}
 	if pods != nil {
 		pods.flush()
-	}
-
-	for _, wl := range res.Workloads {
-		for _, l := range wl.Logs {
-			run := ""
-			if l.Previous {
-				run = ", previous run"
-			}
-			fmt.Fprintf(w, "\nLogs of %s (container %s%s):\n", l.Pod, l.Container, run)
-			switch {
-			case l.Error != "":
-				fmt.Fprintf(w, "  %s unavailable: %s\n", o.paint("warning:", yellow), l.Error)
-			case len(l.Lines) == 0:
-				fmt.Fprintln(w, "  (no output)")
-			}
-			for _, line := range l.Lines {
-				fmt.Fprintln(w, "  "+line)
-			}
-		}
 	}
 
 	if res.EventsError != "" {
