@@ -20,6 +20,7 @@ const (
 	green  = "\033[32m"
 	yellow = "\033[33m"
 	cyan   = "\033[36m"
+	name   = "\033[1;35m" // bold magenta: resource names
 	reset  = "\033[0m"
 )
 

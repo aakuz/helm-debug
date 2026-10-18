@@ -10,6 +10,8 @@ import (
 
 	"helm.sh/helm/v4/pkg/release/common"
 	rspb "helm.sh/helm/v4/pkg/release/v1"
+
+	"github.com/aakuz/helm-debug/internal/helm"
 )
 
 const diffManifestV1 = `apiVersion: apps/v1
@@ -299,7 +301,7 @@ func TestDiffColor(t *testing.T) {
 		return b.String()
 	}
 	colored := render(true)
-	for _, want := range []string{cyan + "@@ -1,1 +1,1 @@" + reset, red + "-replicas: 2" + reset, green + "+replicas: 3" + reset, yellow + "changed" + reset} {
+	for _, want := range []string{cyan + "@@ -1,1 +1,1 @@" + reset, red + "-replicas: 2" + reset, green + "+replicas: 3" + reset, yellow + "changed" + reset, name + "api" + reset} {
 		if !strings.Contains(colored, want) {
 			t.Errorf("colored output lacks %q:\n%q", want, colored)
 		}
@@ -314,8 +316,8 @@ func TestDriftStatusColor(t *testing.T) {
 	o := NewOptions()
 	o.Color = &color
 	var b strings.Builder
-	printDrift(o, &b, &driftResult{Release: "api", Namespace: "prod", Revision: 1, Resources: []driftRow{{Status: "drifted"}, {Status: "in-sync"}}})
-	if !strings.Contains(b.String(), yellow+"drifted"+reset) || !strings.Contains(b.String(), green+"in-sync"+reset) {
+	printDrift(o, &b, &driftResult{Release: "api", Namespace: "prod", Revision: 1, Resources: []driftRow{{Object: helm.Object{Name: "api"}, Status: "drifted"}, {Status: "in-sync"}}})
+	if !strings.Contains(b.String(), yellow+"drifted"+reset) || !strings.Contains(b.String(), green+"in-sync"+reset) || !strings.Contains(b.String(), name+"api"+reset) {
 		t.Errorf("drift statuses not colored: %q", b.String())
 	}
 }

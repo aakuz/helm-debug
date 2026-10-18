@@ -385,7 +385,7 @@ func printDiff(o *Options, w io.Writer, result *diffResult) {
 		t := newTable(w)
 		t.add("KIND", "NAMESPACE", "NAME", "STATUS")
 		for _, row := range result.Manifest {
-			t.add(row.Kind, row.Namespace, row.Name, o.paint(row.Status, statusColor(row.Status)))
+			t.add(row.Kind, row.Namespace, o.paint(row.Name, name), o.paint(row.Status, statusColor(row.Status)))
 		}
 		t.flush()
 		for _, row := range result.Manifest {
@@ -393,7 +393,7 @@ func printDiff(o *Options, w io.Writer, result *diffResult) {
 			if row.Namespace != "" {
 				ns = row.Namespace + "/"
 			}
-			fmt.Fprintf(w, "\n--- %s %s%s (%s)\n%s", row.Kind, ns, row.Name, o.paint(row.Status, statusColor(row.Status)), o.paintDiff(row.Diff))
+			fmt.Fprintf(w, "\n--- %s %s%s (%s)\n%s", row.Kind, ns, o.paint(row.Name, name), o.paint(row.Status, statusColor(row.Status)), o.paintDiff(row.Diff))
 		}
 	}
 	fmt.Fprintln(w, "\nValues:")

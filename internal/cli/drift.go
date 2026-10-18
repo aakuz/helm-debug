@@ -130,7 +130,7 @@ func printDrift(o *Options, w io.Writer, result *driftResult) {
 	t := newTable(w)
 	t.add("KIND", "NAMESPACE", "NAME", "STATUS", "CHANGED FIELDS")
 	for _, row := range result.Resources {
-		t.add(row.Kind, row.Namespace, row.Name, o.paint(row.Status, statusColor(row.Status)), strings.Join(row.Changes, ", "))
+		t.add(row.Kind, row.Namespace, o.paint(row.Name, name), o.paint(row.Status, statusColor(row.Status)), strings.Join(row.Changes, ", "))
 	}
 	t.flush()
 	for _, row := range result.Resources {
