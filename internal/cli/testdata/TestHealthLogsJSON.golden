@@ -1,0 +1,60 @@
+{
+  "release": "web",
+  "namespace": "prod",
+  "revision": 1,
+  "status": "deployed",
+  "workloads": [
+    {
+      "kind": "Deployment",
+      "namespace": "prod",
+      "name": "web",
+      "status": "unhealthy",
+      "desired": 3,
+      "ready": 1,
+      "message": "1 of 3 available",
+      "pods": [
+        {
+          "name": "web-aaa",
+          "phase": "Running",
+          "reason": "CrashLoopBackOff",
+          "container": "main",
+          "restarts": 7
+        },
+        {
+          "name": "web-bbb",
+          "phase": "Pending",
+          "reason": "ImagePullBackOff",
+          "container": "main",
+          "restarts": 0
+        }
+      ],
+      "logs": [
+        {
+          "pod": "web-aaa",
+          "container": "main",
+          "previous": true,
+          "lines": [
+            "starting",
+            "panic: no database"
+          ]
+        },
+        {
+          "pod": "web-ddd",
+          "container": "main",
+          "lines": [
+            "listening on :8080",
+            "readiness probe failed"
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "StatefulSet",
+      "namespace": "prod",
+      "name": "db",
+      "status": "healthy",
+      "desired": 1,
+      "ready": 1
+    }
+  ]
+}

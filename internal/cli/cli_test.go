@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -53,6 +54,11 @@ type cluster struct {
 	t    *testing.T
 	kube *kubefake.Clientset
 	live []runtime.Object
+	// logs maps "pod/container" (suffixed "!previous" for a previous run) to log text.
+	logs     map[string]string
+	logCalls []string
+	logTail  int64
+	logMu    sync.Mutex
 }
 
 func newCluster(t *testing.T) *cluster {
@@ -134,6 +140,7 @@ func (c *cluster) clients(namespace string) *Clients {
 			Mapper:  mapper,
 		},
 		Namespace: namespace,
+		Logs:      c.readLog,
 	}
 }
 

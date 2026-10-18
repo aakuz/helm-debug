@@ -33,6 +33,8 @@ type Clients struct {
 	Store     *helm.Store
 	Cluster   *kube.Cluster
 	Namespace string
+	// Logs reads container logs; nil disables log output.
+	Logs kube.LogReader
 }
 
 // Options holds global flags and dependencies.
@@ -128,6 +130,7 @@ func realClients(o *Options) (*Clients, error) {
 		Store:     &helm.Store{Kube: kc, Metadata: mc, Driver: drv},
 		Cluster:   &kube.Cluster{Dynamic: dc, Mapper: mapper},
 		Namespace: ns,
+		Logs:      kube.PodLogReader(kc),
 	}, nil
 }
 

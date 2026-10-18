@@ -1,0 +1,164 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+)
+
+// readLog is the fake pod log reader; it records every request.
+func (c *cluster) readLog(_ context.Context, ns, pod, container string, tail int64, previous bool) (string, error) {
+	key := pod + "/" + container
+	if previous {
+		key += "!previous"
+	}
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	c.logCalls = append(c.logCalls, ns+"/"+key)
+	c.logTail = tail
+	text, ok := c.logs[key]
+	if !ok {
+		return "", errors.New("no logs for " + key)
+	}
+	return text, nil
+}
+
+func (c *cluster) setLog(key, text string) {
+	if c.logs == nil {
+		c.logs = map[string]string{}
+	}
+	c.logs[key] = text
+}
+
+// readyPod adds a running pod that passed its readiness check.
+func (c *cluster) readyPod(name, app string) {
+	c.t.Helper()
+	c.yaml(fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata: {name: %s, namespace: prod, labels: {app: %s}}
+status:
+  phase: Running
+  conditions: [{type: Ready, status: "True"}]
+  containerStatuses:
+  - {name: main, ready: true, restartCount: 0, state: {running: {startedAt: "2026-10-18T10:00:00Z"}}}
+`, name, app))
+}
+
+// notReadyPod adds a running pod whose container fails its readiness check.
+func (c *cluster) notReadyPod(name, app string) {
+	c.t.Helper()
+	c.yaml(fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata: {name: %s, namespace: prod, labels: {app: %s}}
+status:
+  phase: Running
+  conditions: [{type: Ready, status: "False"}]
+  containerStatuses:
+  - {name: main, ready: false, restartCount: 0, state: {running: {startedAt: "2026-10-18T10:00:00Z"}}}
+`, name, app))
+}
+
+func logsCluster(t *testing.T) *cluster {
+	c := healthCluster(t)
+	c.deployment("web", 3, 3, 3, 3, 1, 1)
+	c.statefulSet("db", 1, 1, 1)
+	c.pod("web-aaa", "web", "Running", "CrashLoopBackOff", 7) // crashed: previous run's logs
+	c.pod("web-bbb", "web", "Pending", "ImagePullBackOff", 0) // never started: no logs to read
+	c.readyPod("web-ccc", "web")
+	c.notReadyPod("web-ddd", "web") // readiness failing: current logs
+	c.setLog("web-aaa/main!previous", "starting\npanic: no database\n")
+	c.setLog("web-ddd/main", "listening on :8080\nreadiness probe failed\n")
+	return c
+}
+
+func TestHealthLogs(t *testing.T) {
+	c := logsCluster(t)
+	out, err := run(t, c, "prod", "health", "web", "--logs", "2")
+	wantProblems(t, err, true)
+	golden(t, out)
+	if c.logTail != 2 {
+		t.Errorf("tail = %d, want 2", c.logTail)
+	}
+	want := map[string]bool{"prod/web-aaa/main!previous": true, "prod/web-ddd/main": true}
+	if len(c.logCalls) != len(want) {
+		t.Fatalf("log requests = %v, want only %v", c.logCalls, want)
+	}
+	for _, call := range c.logCalls {
+		if !want[call] {
+			t.Errorf("unexpected log request %q", call)
+		}
+	}
+}
+
+func TestHealthLogsOffByDefault(t *testing.T) {
+	c := logsCluster(t)
+	out, err := run(t, c, "prod", "health", "web")
+	wantProblems(t, err, true)
+	if len(c.logCalls) != 0 || strings.Contains(out, "panic") {
+		t.Fatalf("logs requested without --logs: %v\n%s", c.logCalls, out)
+	}
+}
+
+func TestHealthLogsJSON(t *testing.T) {
+	c := logsCluster(t)
+	out, err := run(t, c, "prod", "health", "web", "--logs", "5", "-o", "json")
+	wantProblems(t, err, true)
+	golden(t, out)
+}
+
+func TestHealthLogsSkipsNotReadyPodsOfHealthyWorkload(t *testing.T) {
+	c := healthCluster(t)
+	c.deployment("web", 1, 1, 1, 1, 1, 1)
+	c.statefulSet("db", 1, 1, 1)
+	c.notReadyPod("web-extra", "web")
+	c.setLog("web-extra/main", "noise\n")
+	_, err := run(t, c, "prod", "health", "web", "--logs", "3")
+	wantProblems(t, err, false)
+	if len(c.logCalls) != 0 {
+		t.Fatalf("logs requested for a healthy workload: %v", c.logCalls)
+	}
+}
+
+func TestHealthLogsError(t *testing.T) {
+	c := logsCluster(t)
+	delete(c.logs, "web-aaa/main!previous")
+	out, err := run(t, c, "prod", "health", "web", "--logs", "2")
+	wantProblems(t, err, true)
+	if !strings.Contains(out, "no logs for web-aaa/main!previous") || !strings.Contains(out, "readiness probe failed") {
+		t.Fatalf("want the error for one pod and the logs of the other:\n%s", out)
+	}
+}
+
+func TestHealthLogsNegative(t *testing.T) {
+	_, err := run(t, logsCluster(t), "prod", "health", "web", "--logs", "-1")
+	if err == nil || !strings.Contains(err.Error(), "--logs") {
+		t.Fatalf("want an error about --logs, got %v", err)
+	}
+}
+
+func TestSanitizeLog(t *testing.T) {
+	long := strings.Repeat("x", maxLogLine+50)
+	tests := []struct {
+		name, in string
+		want     []string
+	}{
+		{"plain lines", "a\nb\n", []string{"a", "b"}},
+		{"crlf and blank tail", "a\r\nb\r\n\r\n", []string{"a", "b"}},
+		{"colors stripped", "\x1b[31mred\x1b[0m ok", []string{"red ok"}},
+		{"osc title stripped", "\x1b]0;pwned\x07after", []string{"after"}},
+		{"control characters dropped, tab kept", "a\x00b\x07c\td\x7f", []string{"abc\td"}},
+		{"carriage return rewrites dropped", "progress 10%\rprogress 100%", []string{"progress 10%progress 100%"}},
+		{"long line truncated", long, []string{long[:maxLogLine] + "…"}},
+		{"empty", "", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeLog(tt.in)
+			if strings.Join(got, "\n") != strings.Join(tt.want, "\n") || len(got) != len(tt.want) {
+				t.Fatalf("sanitizeLog(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
