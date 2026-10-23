@@ -18,6 +18,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`health`** – readiness of the release's Deployments and StatefulSets, crashing pods and recent warning events.
 - **`lost-found`** – objects that claim a Helm release which no longer exists in the cluster.
 - **`hooks`** – hooks of a release revision (event, weight, delete policy, last run) and leftover hook Jobs and Pods.
+- **`list`** – releases with their latest revision, status and chart, like `helm list`.
 - **`audit`** – revision counts and record sizes per release, and releases whose objects are all gone from the cluster.
 
 The tool is strictly read-only. When it finds a problem it prints the `kubectl`/`helm` command
@@ -219,6 +220,19 @@ that the annotated release really declares it. If that gives no answer, it scans
 in all namespaces: object metadata is listed page by page, and only the latest revision of each
 release is decoded, unless you pass `--all-revisions`. `KIND` accepts kinds, plurals and short
 names (`deploy`, `svc`, `cm`). `-A` matches the object in any namespace.
+
+### list
+
+```console
+$ helm-debug list -A
+NAME     NAMESPACE  REVISION  UPDATED              STATUS    CHART          APP VERSION
+backend  prod       3         2026-10-18 05:00:00  failed    backend-1.3.0  2.0
+web      prod       2         2026-10-18 04:00:00  deployed  web-1.2.0      2.0
+```
+
+Works like `helm list` but reads the release records straight from the cluster, so it also works when Helm
+cannot run. Releases are sorted by name; `-A` lists all namespaces. Only deployed and failed releases are shown
+by default, `--all` adds superseded, uninstalled and pending ones, so a release stuck in `pending-*` needs `--all`.
 
 ### history
 
