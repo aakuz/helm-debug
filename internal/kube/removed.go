@@ -75,11 +75,26 @@ func LookupRemoval(apiVersion, kind string) (Removal, bool) {
 	return Removal{}, false
 }
 
-// IsBuiltinAPIVersion reports whether the apiVersion belongs to a group shipped with Kubernetes,
+// builtinGroups are the API groups served by kube-apiserver itself. Other groups, even under k8s.io
+// (gateway.networking.k8s.io, snapshot.storage.k8s.io, metrics.k8s.io), come from CRDs or aggregated APIs.
+var builtinGroups = map[string]bool{
+	"": true, "apps": true, "batch": true, "extensions": true, "policy": true, "autoscaling": true,
+	"admissionregistration.k8s.io": true, "apiextensions.k8s.io": true, "apiregistration.k8s.io": true,
+	"authentication.k8s.io": true, "authorization.k8s.io": true, "certificates.k8s.io": true,
+	"coordination.k8s.io": true, "discovery.k8s.io": true, "events.k8s.io": true,
+	"flowcontrol.apiserver.k8s.io": true, "internal.apiserver.k8s.io": true, "networking.k8s.io": true,
+	"node.k8s.io": true, "rbac.authorization.k8s.io": true, "resource.k8s.io": true,
+	"scheduling.k8s.io": true, "storage.k8s.io": true, "storagemigration.k8s.io": true,
+}
+
+// IsBuiltinAPIVersion reports whether the apiVersion belongs to a group served by kube-apiserver,
 // as opposed to a CRD group whose absence only means the CRD is not installed.
 func IsBuiltinAPIVersion(apiVersion string) bool {
 	group, _, ok := strings.Cut(apiVersion, "/")
-	return !ok || !strings.Contains(group, ".") || strings.HasSuffix(group, ".k8s.io")
+	if !ok {
+		group = ""
+	}
+	return builtinGroups[group]
 }
 
 func v(minor int) Version { return Version{1, minor} }
@@ -98,6 +113,9 @@ var removals = []Removal{
 	{"apps/v1beta2", "StatefulSet", v(9), v(16), "apps/v1"},
 	{"apps/v1beta2", "DaemonSet", v(9), v(16), "apps/v1"},
 	{"apps/v1beta2", "ReplicaSet", v(9), v(16), "apps/v1"},
+	{"apps/v1beta1", "ControllerRevision", v(9), v(16), "apps/v1"},
+	{"apps/v1beta2", "ControllerRevision", v(9), v(16), "apps/v1"},
+	{"batch/v2alpha1", "CronJob", v(8), v(21), "batch/v1"},
 
 	{"extensions/v1beta1", "Ingress", v(14), v(22), "networking.k8s.io/v1"},
 	{"networking.k8s.io/v1beta1", "Ingress", v(19), v(22), "networking.k8s.io/v1"},

@@ -109,18 +109,24 @@ func resolveTargetVersion(c *Clients, flag string) (kube.Version, error) {
 func checkAPIVersion(c *Clients, obj helm.Object, target kube.Version) (deprecatedRow, bool) {
 	row := deprecatedRow{Object: obj}
 	rem, known := kube.LookupRemoval(obj.APIVersion, obj.Kind)
+	status := ""
 	if known {
-		row.RemovedIn, row.Replacement = rem.RemovedIn.String(), rem.Replacement
+		status = rem.StatusAt(target)
+		row.Replacement = rem.Replacement
 	}
 	switch {
-	case known && rem.StatusAt(target) == kube.StatusRemoved:
+	case status == kube.StatusRemoved:
 		row.Status = kube.StatusRemoved
 	case kube.IsBuiltinAPIVersion(obj.APIVersion) && notServed(c, obj):
 		row.Status = statusNotServed
-	case known && rem.StatusAt(target) == kube.StatusDeprecated:
+	case status == kube.StatusDeprecated:
 		row.Status = kube.StatusDeprecated
 	default:
 		return deprecatedRow{}, false
+	}
+	// A removal that is still ahead of a not-served object would only confuse.
+	if known && row.Status != statusNotServed {
+		row.RemovedIn = rem.RemovedIn.String()
 	}
 	return row, true
 }

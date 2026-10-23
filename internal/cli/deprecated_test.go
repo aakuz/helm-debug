@@ -143,6 +143,25 @@ func TestDeprecatedNotServedByCluster(t *testing.T) {
 	}
 }
 
+func TestDeprecatedNotServedOmitsFutureRemoval(t *testing.T) {
+	c := newCluster(t)
+	// Not served here, yet only deprecated (not removed) at target 1.24: no removed-in version is shown.
+	c.release("web", "prod", 1, common.StatusDeployed, "apiVersion: policy/v1beta1\nkind: PodDisruptionBudget\nmetadata:\n  name: web\n")
+	res, err := deprecatedRun(t, c, "web", "--target-version", "1.24")
+	wantProblems(t, err, true)
+	f := res.Findings[0]
+	if f.Status != "not-served" || f.RemovedIn != "" || f.Replacement != "policy/v1" {
+		t.Fatalf("finding = %+v", f)
+	}
+}
+
+func TestDeprecatedMissingCRDGroupUnderK8sIOIsIgnored(t *testing.T) {
+	c := newCluster(t)
+	c.release("web", "prod", 1, common.StatusDeployed, "apiVersion: gateway.networking.k8s.io/v1\nkind: HTTPRoute\nmetadata:\n  name: web\n")
+	_, err := deprecatedRun(t, c, "web", "--target-version", "1.30")
+	wantProblems(t, err, false)
+}
+
 func TestDeprecatedIncludesHooks(t *testing.T) {
 	c := newCluster(t)
 	hook := &rspb.Hook{

@@ -42,6 +42,9 @@ func TestLookupRemoval(t *testing.T) {
 	if !ok || r.RemovedIn != (Version{1, 25}) || r.Replacement != "policy/v1" {
 		t.Fatalf("got %+v, %v", r, ok)
 	}
+	if _, ok := LookupRemoval("batch/v2alpha1", "CronJob"); !ok {
+		t.Fatal("batch/v2alpha1 CronJob is missing")
+	}
 	if _, ok := LookupRemoval("apps/v1", "Deployment"); ok {
 		t.Fatal("apps/v1 Deployment is current")
 	}
@@ -88,6 +91,8 @@ func TestIsBuiltinAPIVersion(t *testing.T) {
 	for apiVersion, want := range map[string]bool{
 		"v1": true, "apps/v1": true, "extensions/v1beta1": true, "batch/v1": true,
 		"networking.k8s.io/v1": true, "cert-manager.io/v1": false, "monitoring.coreos.com/v1": false,
+		"gateway.networking.k8s.io/v1": false, "snapshot.storage.k8s.io/v1": false, "metrics.k8s.io/v1beta1": false,
+		"rbac.authorization.k8s.io/v1": true, "flowcontrol.apiserver.k8s.io/v1": true,
 	} {
 		if got := IsBuiltinAPIVersion(apiVersion); got != want {
 			t.Errorf("IsBuiltinAPIVersion(%q) = %v, want %v", apiVersion, got, want)
