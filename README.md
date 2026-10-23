@@ -82,6 +82,28 @@ helm plugin install \
 
 Remove with `helm plugin uninstall debug`.
 
+### Docker
+
+A multi-arch image (`linux/amd64`, `linux/arm64`) is published to `ghcr.io/aakuz/helm-debug` on every release,
+tagged `vX.Y.Z` and `latest`. It is built `FROM scratch` and holds only the static binary and the CA bundle, and
+runs as the non-root user `65532`. It works with a read-only root filesystem.
+
+```bash
+# kubeconfig mounted from the host (HOME is /, so the default path is /.kube/config)
+docker run --rm -v ~/.kube:/.kube:ro ghcr.io/aakuz/helm-debug:latest list -A
+docker run --rm -v ~/.kube:/.kube:ro ghcr.io/aakuz/helm-debug:latest history backend -n prod
+
+# in-cluster: the service account is picked up automatically, no kubeconfig needed
+kubectl run helm-debug --rm -it --restart=Never --image=ghcr.io/aakuz/helm-debug:latest -- list -A
+```
+
+The image runs as uid 65532, so a kubeconfig that is readable only by you (mode 600) cannot be read from the
+mount; run the container as yourself with `docker run --user "$(id -u)" ...` or mount a copy.
+
+The service account of an in-cluster pod needs the read access described in [RBAC](#rbac).
+Cloud kubeconfigs that call a helper binary (`aws`, `gcloud`, …) do not work in the image, since it holds no other
+executables; use a token-based kubeconfig or the in-cluster mode there.
+
 ## Usage
 
 All commands accept the usual kubectl flags (`--context`, `--kubeconfig`, `-n`, …) plus:

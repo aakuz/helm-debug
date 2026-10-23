@@ -290,3 +290,14 @@ func TestVersionFlag(t *testing.T) {
 		t.Fatalf("version output %q lacks %q", out.String(), Version)
 	}
 }
+
+func TestVersionCommandPrintsReleaseVersion(t *testing.T) {
+	old := Version
+	Version = "1.2.3"
+	t.Cleanup(func() { Version = old })
+	out, err := run(t, newCluster(t), "prod", "version")
+	wantProblems(t, err, false)
+	if !strings.Contains(out, "1.2.3") {
+		t.Fatalf("got %q", out)
+	}
+}
