@@ -1,5 +1,5 @@
 Live object ClusterRole/backend-reader: present, annotated with release prod/backend
 
 RELEASE NAMESPACE  RELEASE  REVISION  STATUS      UPDATED              OBJECT NAMESPACE  HOOK
-prod               backend  2         deployed    2026-10-18 04:00:00  -                 -
 prod               backend  1         superseded  2026-10-18 03:00:00  -                 -
+prod               backend  2         deployed    2026-10-18 04:00:00  -                 -

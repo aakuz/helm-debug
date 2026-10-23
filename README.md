@@ -225,9 +225,12 @@ names (`deploy`, `svc`, `cm`). `-A` matches the object in any namespace.
 ```console
 $ helm-debug history backend -n prod
 REVISION  UPDATED              STATUS      CHART          APP VERSION  DESCRIPTION
-3         2026-10-18 05:00:00  failed      backend-1.3.0  2.0          Upgrade "backend" failed: timed out waiting for the condition
 2         2026-10-18 04:00:00  deployed    backend-1.2.0  2.0          -
+3         2026-10-18 05:00:00  failed      backend-1.3.0  2.0          Upgrade "backend" failed: timed out waiting for the condition
 ```
+
+Revisions are listed in Helm's order: oldest first, the latest at the bottom. `--max N` keeps the N latest.
+`find --all-revisions` uses the same order.
 
 ### stuck
 

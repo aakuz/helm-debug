@@ -186,6 +186,9 @@ func TestFindAllRevisionsListsEveryRevision(t *testing.T) {
 	if res.Source != "annotation" || len(res.Matches) != 2 {
 		t.Fatalf("want both revisions via annotation, got %s", out)
 	}
+	if res.Matches[0].Revision != 1 || res.Matches[1].Revision != 2 {
+		t.Fatalf("revisions must be oldest first like helm, got %s", out)
+	}
 	out, err = run(t, backendCluster(t), "prod", "find", "deployment/backend", "-o", "json")
 	wantProblems(t, err, false)
 	if err := json.Unmarshal([]byte(out), &res); err != nil {
@@ -356,10 +359,10 @@ func TestHistoryMax(t *testing.T) {
 		wantAbsOf string
 	}{
 		{"1", []string{"4"}, "3"},
-		{"2", []string{"4", "3"}, "2"},
-		{"0", []string{"4", "3", "2", "1"}, ""},
-		{"10", []string{"4", "3", "2", "1"}, ""},
-		{"-1", []string{"4", "3", "2", "1"}, ""},
+		{"2", []string{"3", "4"}, "2"},
+		{"0", []string{"1", "2", "3", "4"}, ""},
+		{"10", []string{"1", "2", "3", "4"}, ""},
+		{"-1", []string{"1", "2", "3", "4"}, ""},
 	} {
 		out, err := run(t, historyCluster(t), "prod", "history", "backend", "--max", tc.max, "-o", "json")
 		wantProblems(t, err, false)
