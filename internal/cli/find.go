@@ -127,8 +127,9 @@ func runFind(cmd *cobra.Command, o *Options, c *Clients, q findQuery, allRevisio
 				if !allRevisions {
 					rels = rels[:1]
 				}
-				for _, rel := range rels {
-					res.Matches = append(res.Matches, matchRelease(rel, q)...)
+				// History is newest first; matches are listed oldest first like helm history.
+				for i := len(rels) - 1; i >= 0; i-- {
+					res.Matches = append(res.Matches, matchRelease(rels[i], q)...)
 				}
 				if len(res.Matches) > 0 {
 					res.Source = "annotation"
@@ -173,7 +174,7 @@ func runFind(cmd *cobra.Command, o *Options, c *Clients, q findQuery, allRevisio
 		if a.Release != b.Release {
 			return a.Release < b.Release
 		}
-		return a.Revision > b.Revision
+		return a.Revision < b.Revision
 	})
 	if owners := distinctReleases(res.Matches); !allRevisions && len(owners) > 1 {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("object is declared by %d releases (%s); only one of them can own it", len(owners), strings.Join(owners, ", ")))
