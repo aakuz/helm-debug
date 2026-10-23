@@ -316,3 +316,49 @@ func TestLatestOnlyEmpty(t *testing.T) {
 		t.Errorf("LatestOnly(nil) = %+v, want empty", got)
 	}
 }
+
+func TestRecordSizes(t *testing.T) {
+	for _, drv := range drivers {
+		t.Run(drv, func(t *testing.T) {
+			big := testRelease("app", "prod", 2)
+			big.Manifest = "kind: x\nname: padding-that-grows-the-record-0123456789abcdefghijklmnopqrstuvwxyz\n"
+			s := seed(t, drv, testRelease("app", "prod", 1), big, testRelease("db", "dev", 4))
+
+			all, err := s.RecordSizes(context.Background(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(all) != 3 {
+				t.Fatalf("got %+v, want 3 records", all)
+			}
+			bySize := map[string]RecordSize{}
+			for _, r := range all {
+				if r.Bytes <= 0 {
+					t.Errorf("%+v has no size", r)
+				}
+				bySize[r.Object] = r
+			}
+			if r := bySize["sh.helm.release.v1.app.v2"]; r.Namespace != "prod" || r.Release != "app" || r.Version != 2 {
+				t.Errorf("unexpected record %+v", r)
+			}
+			if bySize["sh.helm.release.v1.app.v2"].Bytes <= bySize["sh.helm.release.v1.app.v1"].Bytes {
+				t.Errorf("a larger release must produce a larger record: %+v", bySize)
+			}
+
+			prod, err := s.RecordSizes(context.Background(), "prod")
+			if err != nil || len(prod) != 2 {
+				t.Errorf("prod: %+v, %v; want 2 records", prod, err)
+			}
+		})
+	}
+}
+
+func TestRecordSizesError(t *testing.T) {
+	kc := fake.NewClientset()
+	kc.PrependReactor("list", "secrets", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("boom")
+	})
+	if _, err := (&Store{Kube: kc, Driver: StorageSecret}).RecordSizes(context.Background(), ""); err == nil {
+		t.Error("expected list error")
+	}
+}

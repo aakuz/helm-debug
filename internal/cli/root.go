@@ -212,6 +212,7 @@ func NewRootCommand(o *Options) *cobra.Command {
 		newHealthCommand(o),
 		newLostFoundCommand(o),
 		newDeprecatedCommand(o),
+		newAuditCommand(o),
 		newHooksCommand(o),
 	)
 	return root

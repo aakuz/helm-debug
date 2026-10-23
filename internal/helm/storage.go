@@ -119,12 +119,7 @@ func (s *Store) ListRefs(ctx context.Context, namespace string) ([]Ref, error) {
 			return nil, fmt.Errorf("listing helm %ss: %w", s.Driver, err)
 		}
 		for _, it := range list.Items {
-			refs = append(refs, Ref{
-				Namespace: it.Namespace,
-				Object:    it.Name,
-				Release:   it.Labels["name"],
-				Version:   recordVersion(it.Name, it.Labels["version"]),
-			})
+			refs = append(refs, refOf(it.ObjectMeta))
 		}
 		if list.Continue == "" {
 			return refs, nil
@@ -178,4 +173,60 @@ func (s *Store) Load(ref Ref) (*rspb.Release, error) {
 		return nil, fmt.Errorf("unexpected release type %T", item)
 	}
 	return rel, nil
+}
+
+// sizePageSize is smaller than pageSize because RecordSizes lists whole records, not just their metadata.
+const sizePageSize = 50
+
+// RecordSize is the stored size of a release record, which counts towards the 1 MiB object limit.
+type RecordSize struct {
+	Ref
+	Bytes int
+}
+
+// RecordSizes lists release records page by page and measures their data. An empty namespace means all namespaces.
+func (s *Store) RecordSizes(ctx context.Context, namespace string) ([]RecordSize, error) {
+	var sizes []RecordSize
+	opts := metav1.ListOptions{LabelSelector: "owner=helm", Limit: sizePageSize}
+	for {
+		var cont string
+		if s.Driver == StorageConfigMap {
+			list, err := s.Kube.CoreV1().ConfigMaps(namespace).List(ctx, opts)
+			if err != nil {
+				return nil, fmt.Errorf("listing helm %ss: %w", s.Driver, err)
+			}
+			for _, it := range list.Items {
+				n := 0
+				for _, v := range it.Data {
+					n += len(v)
+				}
+				for _, v := range it.BinaryData {
+					n += len(v)
+				}
+				sizes = append(sizes, RecordSize{Ref: refOf(it.ObjectMeta), Bytes: n})
+			}
+			cont = list.Continue
+		} else {
+			list, err := s.Kube.CoreV1().Secrets(namespace).List(ctx, opts)
+			if err != nil {
+				return nil, fmt.Errorf("listing helm %ss: %w", s.Driver, err)
+			}
+			for _, it := range list.Items {
+				n := 0
+				for _, v := range it.Data {
+					n += len(v)
+				}
+				sizes = append(sizes, RecordSize{Ref: refOf(it.ObjectMeta), Bytes: n})
+			}
+			cont = list.Continue
+		}
+		if cont == "" {
+			return sizes, nil
+		}
+		opts.Continue = cont
+	}
+}
+
+func refOf(m metav1.ObjectMeta) Ref {
+	return Ref{Namespace: m.Namespace, Object: m.Name, Release: m.Labels["name"], Version: recordVersion(m.Name, m.Labels["version"])}
 }
