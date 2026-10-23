@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/version"
 	discoveryfake "k8s.io/client-go/discovery/fake"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
@@ -66,6 +67,10 @@ type cluster struct {
 	// logErrors maps a log key to an error text returned by the fake reader.
 	logErrors map[string]string
 	logMu     sync.Mutex
+	// serverVersion is the Kubernetes version the fake discovery client reports; empty means it reports none.
+	serverVersion string
+	// extraKinds are served by the fake API server in addition to kinds.
+	extraKinds []kindInfo
 }
 
 func newCluster(t *testing.T) *cluster {
@@ -141,7 +146,7 @@ func (c *cluster) clients(namespace string) *Clients {
 	mapper := meta.NewDefaultRESTMapper(nil)
 	listKinds := map[schema.GroupVersionResource]string{}
 	var resources []*metav1.APIResourceList
-	for _, k := range kinds {
+	for _, k := range append(slices.Clone(kinds), c.extraKinds...) {
 		res := metav1.APIResource{Name: k.resource, Kind: k.gvk.Kind, Namespaced: k.namespaced, Verbs: metav1.Verbs{"get", "list"}}
 		if i := slices.IndexFunc(resources, func(l *metav1.APIResourceList) bool { return l.GroupVersion == k.gvk.GroupVersion().String() }); i >= 0 {
 			resources[i].APIResources = append(resources[i].APIResources, res)
@@ -158,6 +163,10 @@ func (c *cluster) clients(namespace string) *Clients {
 	listKinds[schema.GroupVersionResource{Version: "v1", Resource: "pods"}] = "PodList"
 	listKinds[schema.GroupVersionResource{Version: "v1", Resource: "events"}] = "EventList"
 	metaClient := metadatafake.NewSimpleMetadataClient(scheme, metas...)
+	disc := &discoveryfake.FakeDiscovery{Fake: &clienttesting.Fake{Resources: resources}}
+	if c.serverVersion != "" {
+		disc.FakedServerVersion = &version.Info{GitVersion: c.serverVersion}
+	}
 	return &Clients{
 		Store: &helm.Store{
 			Kube:     c.kube,
@@ -167,7 +176,7 @@ func (c *cluster) clients(namespace string) *Clients {
 		Cluster: &kube.Cluster{
 			Dynamic:   dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, c.live...),
 			Mapper:    mapper,
-			Discovery: &discoveryfake.FakeDiscovery{Fake: &clienttesting.Fake{Resources: resources}},
+			Discovery: disc,
 			Metadata:  metaClient,
 		},
 		Namespace: namespace,

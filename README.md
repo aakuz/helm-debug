@@ -277,6 +277,23 @@ warning: 1 hook object(s) outlived their delete policy
 its last run finished and its delete policy (`hook-succeeded` or `hook-failed`) asks for removal after
 that outcome. Objects kept by policy or by Helm's default `before-hook-creation` are not orphans.
 
+### deprecated
+
+```console
+$ helm-debug deprecated backend -n prod --target-version 1.32
+Release prod/backend revision 3, target Kubernetes 1.32
+
+KIND     NAME     APIVERSION          HOOK  STATUS   REMOVED-IN  REPLACEMENT
+Ingress  backend  extensions/v1beta1        removed  1.22        networking.k8s.io/v1
+```
+
+Scans the manifest and hooks of a revision (`--revision N`, default latest) for apiVersions removed in the
+target version, like helm-mapkubeapis but read-only. The target defaults to the cluster's server version, so
+pass `--target-version` to check an upgrade before it happens. Statuses: `removed` (gone at the target
+version, per a built-in table of the Kubernetes deprecation guide), `deprecated` (still served at the
+target version) and `not-served` (a built-in apiVersion the connected cluster no longer serves, whether or
+not it is in the table; kinds from CRD groups are not checked against the cluster).
+
 ### health
 
 ```console
@@ -461,7 +478,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 |---|---|
 | 0 | No problems (`diff` always exits 0 when it succeeds) |
 | 1 | Execution error (no access, release not found, bad flags, …) |
-| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`), lost resources (`lost-found`), orphaned hook objects (`hooks`) |
+| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`) |
 
 ## RBAC
 
@@ -475,6 +492,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 | `stuck` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
 | `lost-found` | `list` on secrets (or configmaps) cluster-wide, `list` on every kind (metadata only) in the namespace, or cluster-wide with `-A`, plus API discovery |
 | `hooks` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the hook Jobs and Pods |
+| `deprecated` | `get`/`list` on secrets (or configmaps) in the release namespace, API discovery (and `get` on `/version` unless `--target-version` is given) |
 | `health` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the Deployments and StatefulSets, `list` on pods and events in their namespaces, `get` on `pods/log` with `--logs` or `--all-logs` |
 
 ## Development
