@@ -29,7 +29,7 @@ func newHistoryCommand(o *Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "history RELEASE",
 		Short: "Show release revisions with status, chart version and the reason of failures",
-		Long: `Show release revisions, newest first, including the description Helm stored
+		Long: `Show release revisions, oldest first like helm history (the latest is at the bottom), including the description Helm stored
 for each revision (it holds the error message for failed operations).
 
 Exits with code 2 when the latest revision is failed or pending.`,
@@ -44,11 +44,12 @@ Exits with code 2 when the latest revision is failed or pending.`,
 				return err
 			}
 			res := historyResult{Release: args[0], Namespace: c.Namespace}
+			// rels is newest first: --max keeps the latest revisions, which are then printed oldest first like helm history.
 			for i, r := range rels {
 				if limit > 0 && i >= limit {
 					break
 				}
-				res.Revisions = append(res.Revisions, toHistoryRow(r))
+				res.Revisions = append([]historyRow{toHistoryRow(r)}, res.Revisions...)
 			}
 			if err := o.print(res, func(w io.Writer) { printHistory(o, w, res) }); err != nil {
 				return err

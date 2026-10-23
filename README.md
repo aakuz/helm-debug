@@ -20,6 +20,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`hooks`** – hooks of a release revision (event, weight, delete policy, last run) and leftover hook Jobs and Pods.
 - **`list`** – releases with their latest revision, status and chart, like `helm list`.
 - **`audit`** – revision counts and record sizes per release, and releases whose objects are all gone from the cluster.
+- **`values`** – user-supplied or computed values of a release revision, as a values file.
 
 The tool is strictly read-only. When it finds a problem it prints the `kubectl`/`helm` command
 that fixes it, but never runs it. Output is a table by default, or `-o json|yaml` for scripts
@@ -239,9 +240,12 @@ by default, `--all` adds superseded, uninstalled and pending ones, so a release 
 ```console
 $ helm-debug history backend -n prod
 REVISION  UPDATED              STATUS      CHART          APP VERSION  DESCRIPTION
-3         2026-10-18 05:00:00  failed      backend-1.3.0  2.0          Upgrade "backend" failed: timed out waiting for the condition
 2         2026-10-18 04:00:00  deployed    backend-1.2.0  2.0          -
+3         2026-10-18 05:00:00  failed      backend-1.3.0  2.0          Upgrade "backend" failed: timed out waiting for the condition
 ```
+
+Revisions are listed in Helm's order: oldest first, the latest at the bottom. `--max N` keeps the N latest.
+`find --all-revisions` uses the same order.
 
 ### stuck
 
@@ -291,6 +295,18 @@ warning: 1 hook object(s) outlived their delete policy
 `--revision N` inspects an older revision. A hook Job or Pod is an orphan when it still exists although
 its last run finished and its delete policy (`hook-succeeded` or `hook-failed`) asks for removal after
 that outcome. Objects kept by policy or by Helm's default `before-hook-creation` are not orphans.
+
+### values
+
+```console
+$ helm-debug values backend -n prod --revision 2 --output-file values.yaml
+```
+
+Prints the user-supplied values of a revision (default latest) as plain YAML, ready for
+`helm upgrade -f` or `helm template -f`. `--all` prints the computed values, the chart defaults
+merged with the user values. `-o json` prints JSON and `--output-file PATH` writes the values to a
+file (mode 0600) instead of stdout. Values may contain secrets, so a warning is printed to stderr;
+they are never logged, not even with `--verbose`.
 
 ### deprecated
 

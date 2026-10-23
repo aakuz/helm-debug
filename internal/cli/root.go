@@ -215,6 +215,7 @@ func NewRootCommand(o *Options) *cobra.Command {
 		newAuditCommand(o),
 		newHooksCommand(o),
 		newListCommand(o),
+		newValuesCommand(o),
 	)
 	return root
 }
