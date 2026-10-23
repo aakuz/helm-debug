@@ -18,6 +18,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`health`** – readiness of the release's Deployments and StatefulSets, crashing pods and recent warning events.
 - **`lost-found`** – objects that claim a Helm release which no longer exists in the cluster.
 - **`hooks`** – hooks of a release revision (event, weight, delete policy, last run) and leftover hook Jobs and Pods.
+- **`audit`** – revision counts and record sizes per release, and releases whose objects are all gone from the cluster.
 
 The tool is strictly read-only. When it finds a problem it prints the `kubectl`/`helm` command
 that fixes it, but never runs it. Output is a table by default, or `-o json|yaml` for scripts
@@ -294,6 +295,27 @@ version, per a built-in table of the Kubernetes deprecation guide), `deprecated`
 target version) and `not-served` (a built-in apiVersion the connected cluster no longer serves, whether or
 not it is in the table; kinds from CRD groups are not checked against the cluster).
 
+### audit
+
+```console
+$ helm-debug audit -A
+NAMESPACE  RELEASE  STATUS    REVISIONS  LARGEST   TOTAL     FINDINGS
+dev        scratch  deployed  1          3.1KiB    3.1KiB    orphaned
+prod       backend  deployed  34         812.0KiB  9.8MiB    revisions,record-size
+prod       web      deployed  4          40.2KiB   120.5KiB
+```
+
+Lists every release (`-A` for all namespaces) with its revision count and the size of its release
+records. A record counts towards the 1 MiB Kubernetes object limit, so a release is flagged when
+it has more than `--max-revisions` revisions (default `20`), when its largest record exceeds
+`--max-record-size` (default `800Ki`), or when it is `orphaned`: its latest revision declares objects
+and none of them exist. Hooks are ignored, and uninstalled releases that keep their history are never
+orphaned. A lookup that fails (for example for lack of permissions, or a kind the cluster does not know)
+does not prove the objects are gone, so it never flags a release.
+
+Record sizes come from listing the full records in pages of 50, so `-A` on a big cluster transfers
+all release data once.
+
 ### health
 
 ```console
@@ -478,7 +500,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 |---|---|
 | 0 | No problems (`diff` always exits 0 when it succeeds) |
 | 1 | Execution error (no access, release not found, bad flags, …) |
-| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`) |
+| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), releases that need cleanup (`audit`) |
 
 ## RBAC
 
@@ -493,6 +515,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 | `lost-found` | `list` on secrets (or configmaps) cluster-wide, `list` on every kind (metadata only) in the namespace, or cluster-wide with `-A`, plus API discovery |
 | `hooks` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the hook Jobs and Pods |
 | `deprecated` | `get`/`list` on secrets (or configmaps) in the release namespace, API discovery (and `get` on `/version` unless `--target-version` is given) |
+| `audit` | `list` on secrets (or configmaps) in the namespace, or cluster-wide with `-A`, and `get` on the objects of every latest revision |
 | `health` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the Deployments and StatefulSets, `list` on pods and events in their namespaces, `get` on `pods/log` with `--logs` or `--all-logs` |
 
 ## Development
