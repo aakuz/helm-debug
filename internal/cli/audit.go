@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"slices"
 	"sort"
 	"strings"
@@ -84,7 +85,7 @@ Exits with code 2 when a release is flagged.`,
 			rows := make([]auditRow, len(groups))
 			failed := make([]bool, len(groups))
 			parallel(len(groups), o.Concurrency, func(i int) {
-				rows[i], failed[i] = auditRelease(cmd, c, groups[i], res)
+				rows[i], failed[i] = auditRelease(cmd.Context(), c, groups[i], res.MaxRevisions, res.MaxRecordBytes)
 			})
 			res.Scanned = len(groups)
 			res.Releases = append(res.Releases, rows...)
@@ -128,7 +129,7 @@ func groupRecords(sizes []helm.RecordSize) [][]helm.RecordSize {
 }
 
 // auditRelease measures one release; failed is true when its latest record cannot be decoded.
-func auditRelease(cmd *cobra.Command, c *Clients, records []helm.RecordSize, limits auditResult) (row auditRow, failed bool) {
+func auditRelease(ctx context.Context, c *Clients, records []helm.RecordSize, maxRevisions, maxRecordBytes int) (row auditRow, failed bool) {
 	latest := records[0]
 	row = auditRow{
 		Release: latest.Release, Namespace: latest.Namespace, Revisions: len(records), Findings: []string{},
@@ -141,20 +142,21 @@ func auditRelease(cmd *cobra.Command, c *Clients, records []helm.RecordSize, lim
 		}
 	}
 	row.LatestRevision = latest.Version
-	if row.Revisions > limits.MaxRevisions {
+	if row.Revisions > maxRevisions {
 		row.Findings = append(row.Findings, findingRevisions)
 	}
-	if row.LargestBytes > limits.MaxRecordBytes {
+	if row.LargestBytes > maxRecordBytes {
 		row.Findings = append(row.Findings, findingRecordSize)
 	}
 	rel, err := c.Store.Load(latest.Ref)
 	if err != nil {
+		slog.Debug("cannot decode release record", "namespace", latest.Namespace, "object", latest.Object, "error", err)
 		return row, true
 	}
 	if rel.Info != nil {
 		row.Status = string(rel.Info.Status)
 	}
-	if allObjectsGone(cmd.Context(), c, rel) {
+	if allObjectsGone(ctx, c, rel) {
 		row.Findings = append(row.Findings, findingOrphaned)
 	}
 	return row, false
@@ -162,9 +164,9 @@ func auditRelease(cmd *cobra.Command, c *Clients, records []helm.RecordSize, lim
 
 // allObjectsGone is true when the revision declares objects and every one of them is verifiably absent.
 // A failed lookup or an unknown kind proves nothing, so it keeps the release from being flagged.
-// Hooks are ignored, since they are meant to disappear.
+// Hooks are ignored, since they are meant to disappear; so are releases being installed or removed.
 func allObjectsGone(ctx context.Context, c *Clients, rel *rspb.Release) bool {
-	if rel.Info != nil && (rel.Info.Status == common.StatusUninstalled || rel.Info.Status == common.StatusUninstalling) {
+	if rel.Info != nil && (rel.Info.Status.IsPending() || rel.Info.Status == common.StatusUninstalled || rel.Info.Status == common.StatusUninstalling) {
 		return false
 	}
 	declared := 0

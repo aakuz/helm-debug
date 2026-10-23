@@ -216,9 +216,6 @@ func (s *Store) RecordSizes(ctx context.Context, namespace string) ([]RecordSize
 				for _, v := range it.Data {
 					n += len(v)
 				}
-				for _, v := range it.StringData {
-					n += len(v)
-				}
 				sizes = append(sizes, RecordSize{Ref: refOf(it.ObjectMeta), Bytes: n})
 			}
 			cont = list.Continue

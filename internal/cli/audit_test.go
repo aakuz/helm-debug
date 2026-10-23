@@ -127,6 +127,8 @@ func TestAuditNotOrphaned(t *testing.T) {
 		"one of two objects exists": {common.StatusDeployed, twoObjects, true},
 		"uninstalled keeps history": {common.StatusUninstalled, simpleManifest, false},
 		"declares no objects":       {common.StatusDeployed, "", false},
+		"install in flight":         {common.StatusPendingInstall, simpleManifest, false},
+		"upgrade in flight":         {common.StatusPendingUpgrade, simpleManifest, false},
 		"unknown kind":              {common.StatusDeployed, "apiVersion: example.com/v1\nkind: Widget\nmetadata:\n  name: w\n", false},
 	} {
 		t.Run(name, func(t *testing.T) {

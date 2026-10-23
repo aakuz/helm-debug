@@ -309,8 +309,8 @@ Lists every release (`-A` for all namespaces) with its revision count and the si
 records. A record counts towards the 1 MiB Kubernetes object limit, so a release is flagged when
 it has more than `--max-revisions` revisions (default `20`), when its largest record exceeds
 `--max-record-size` (default `800Ki`), or when it is `orphaned`: its latest revision declares objects
-and none of them exist. Hooks are ignored, and uninstalled releases that keep their history are never
-orphaned. A lookup that fails (for example for lack of permissions, or a kind the cluster does not know)
+and none of them exist. Hooks are ignored, and releases that are pending (an operation may still be creating their objects) or
+uninstalled with kept history are never orphaned. A lookup that fails (for example for lack of permissions, or a kind the cluster does not know)
 does not prove the objects are gone, so it never flags a release.
 
 Record sizes come from listing the full records in pages of 50, so `-A` on a big cluster transfers
