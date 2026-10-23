@@ -3,6 +3,7 @@ package helm
 import (
 	"sort"
 	"strings"
+	"time"
 
 	rspb "helm.sh/helm/v4/pkg/release/v1"
 	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
@@ -27,6 +28,10 @@ type head struct {
 	} `json:"metadata"`
 }
 
+func (h head) object() Object {
+	return Object{APIVersion: h.APIVersion, Kind: h.Kind, Namespace: h.Metadata.Namespace, Name: h.Metadata.Name}
+}
+
 func parse(doc string) (head, bool) {
 	var h head
 	if err := yaml.Unmarshal([]byte(doc), &h); err != nil {
@@ -41,7 +46,7 @@ func Objects(rel *rspb.Release) []Object {
 	var objs []Object
 	for _, doc := range releaseutil.SplitManifests(rel.Manifest) {
 		if h, ok := parse(doc); ok {
-			objs = append(objs, Object{APIVersion: h.APIVersion, Kind: h.Kind, Namespace: h.Metadata.Namespace, Name: h.Metadata.Name})
+			objs = append(objs, h.object())
 		}
 	}
 	for _, hk := range rel.Hooks {
@@ -56,7 +61,9 @@ func Objects(rel *rspb.Release) []Object {
 		if len(events) == 0 {
 			events = []string{"hook"}
 		}
-		objs = append(objs, Object{APIVersion: h.APIVersion, Kind: h.Kind, Namespace: h.Metadata.Namespace, Name: h.Metadata.Name, Hook: events})
+		obj := h.object()
+		obj.Hook = events
+		objs = append(objs, obj)
 	}
 	sort.SliceStable(objs, func(i, j int) bool {
 		a, b := objs[i], objs[j]
@@ -76,3 +83,48 @@ func Objects(rel *rspb.Release) []Object {
 
 // HookEvents formats hook events for display.
 func (o Object) HookEvents() string { return strings.Join(o.Hook, ",") }
+
+// Hook is a hook declared by a release revision, with the metadata Helm recorded about its last run.
+type Hook struct {
+	Object
+	Weight         int
+	DeletePolicies []string
+	Phase          string
+	LastRun        time.Time
+}
+
+// Hooks returns the hooks of the release sorted by weight, then kind and name (the order Helm runs them in).
+func Hooks(rel *rspb.Release) []Hook {
+	var hooks []Hook
+	for _, hk := range rel.Hooks {
+		h, ok := parse(hk.Manifest)
+		if !ok {
+			continue
+		}
+		obj := h.object()
+		for _, e := range hk.Events {
+			obj.Hook = append(obj.Hook, string(e))
+		}
+		policies := make([]string, 0, len(hk.DeletePolicies))
+		for _, p := range hk.DeletePolicies {
+			policies = append(policies, string(p))
+		}
+		// Helm records the start of the run and, once it ends, the completion.
+		last := hk.LastRun.CompletedAt
+		if last.IsZero() {
+			last = hk.LastRun.StartedAt
+		}
+		hooks = append(hooks, Hook{Object: obj, Weight: hk.Weight, DeletePolicies: policies, Phase: string(hk.LastRun.Phase), LastRun: last})
+	}
+	sort.SliceStable(hooks, func(i, j int) bool {
+		a, b := hooks[i], hooks[j]
+		if a.Weight != b.Weight {
+			return a.Weight < b.Weight
+		}
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		return a.Name < b.Name
+	})
+	return hooks
+}
