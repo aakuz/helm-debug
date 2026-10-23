@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -126,7 +127,7 @@ func TestValuesOutputFile(t *testing.T) {
 	if err != nil || !strings.Contains(string(b), "replicas: 5") {
 		t.Fatalf("file = %q, %v", b, err)
 	}
-	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+	if fi, _ := os.Stat(path); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Errorf("mode = %v, want 0600", fi.Mode().Perm())
 	}
 }
@@ -160,7 +161,7 @@ func TestValuesOutputFileTightensExistingMode(t *testing.T) {
 	if _, _, err := runValues(t, twoRevisions(t), "api", "-r", "2", "--output-file", path); err != nil {
 		t.Fatal(err)
 	}
-	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+	if fi, _ := os.Stat(path); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Errorf("mode = %v, want 0600", fi.Mode().Perm())
 	}
 }

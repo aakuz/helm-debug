@@ -26,7 +26,7 @@ are printed, like helm get values --all. Use -o json for JSON.
 
 Values may contain secrets: a warning is printed to stderr and values are never logged.`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, args []string) error {
 			if revision < 0 {
 				return fmt.Errorf("invalid revision %d: must not be negative", revision)
 			}
@@ -81,11 +81,11 @@ func writePrivateFile(path string, b []byte) error {
 		return err
 	}
 	if err := f.Chmod(0o600); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	if _, err := f.Write(b); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	return f.Close()
