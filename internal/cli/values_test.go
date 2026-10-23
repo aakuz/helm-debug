@@ -151,3 +151,16 @@ func TestValuesNeverLogsValuesWithVerbose(t *testing.T) {
 		t.Errorf("value leaked:\n%s\n%s", out, errOut)
 	}
 }
+
+func TestValuesOutputFileTightensExistingMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "values.yaml")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runValues(t, twoRevisions(t), "api", "-r", "2", "--output-file", path); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, want 0600", fi.Mode().Perm())
+	}
+}

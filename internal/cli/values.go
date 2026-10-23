@@ -28,7 +28,7 @@ Values may contain secrets: a warning is printed to stderr and values are never 
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if revision < 0 {
-				return fmt.Errorf("invalid revision %d: must be a positive integer", revision)
+				return fmt.Errorf("invalid revision %d: must not be negative", revision)
 			}
 			c, err := o.NewClients(o)
 			if err != nil {
@@ -53,13 +53,13 @@ Values may contain secrets: a warning is printed to stderr and values are never 
 			}
 			fmt.Fprintln(o.ErrOut, "Warning: values may contain secrets; handle the output with care")
 			if outputFile != "" {
-				return os.WriteFile(outputFile, b, 0o600)
+				return writePrivateFile(outputFile, b)
 			}
 			_, err = o.Out.Write(b)
 			return err
 		},
 	}
-	cmd.Flags().IntVar(&revision, "revision", 0, "Revision to show (default: latest)")
+	cmd.Flags().IntVarP(&revision, "revision", "r", 0, "Release revision to inspect (default: latest)")
 	cmd.Flags().BoolVar(&all, "all", false, "Show computed values: chart defaults merged with user-supplied values")
 	cmd.Flags().StringVar(&outputFile, "output-file", "", "Write values to this file (mode 0600) instead of stdout")
 	return cmd
@@ -72,4 +72,21 @@ func encodeValues(format string, vals map[string]any) ([]byte, error) {
 		return append(b, '\n'), err
 	}
 	return yaml.Marshal(vals)
+}
+
+// writePrivateFile enforces 0600 even when the file already exists, since os.WriteFile only applies the mode on creation.
+func writePrivateFile(path string, b []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
