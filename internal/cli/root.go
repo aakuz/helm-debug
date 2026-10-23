@@ -203,6 +203,14 @@ func NewRootCommand(o *Options) *cobra.Command {
 	pf.BoolVar(&o.ShowSecrets, "show-secrets", false, "Show Secret data values instead of masking them (base64-encoded as stored; stringData is folded into data)")
 
 	root.AddCommand(
+		&cobra.Command{
+			Use:   "version",
+			Short: "Print the helm-debug version",
+			Args:  cobra.NoArgs,
+			Run: func(*cobra.Command, []string) {
+				fmt.Fprintf(o.Out, "%s version %s\n", root.DisplayName(), root.Version)
+			},
+		},
 		newResourcesCommand(o),
 		newDriftCommand(o),
 		newDiffCommand(o),

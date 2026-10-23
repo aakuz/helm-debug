@@ -38,6 +38,18 @@ archives:
       - src: build/plugin.yaml
         strip_parent: true
 
+dockers_v2:
+  - id: image
+    ids: [helm-debug]
+    dockerfile: Dockerfile
+    images: [ghcr.io/aakuz/helm-debug]
+    tags: ["{{ .Tag }}", latest]
+    platforms: [linux/amd64, linux/arm64]
+    labels:
+      org.opencontainers.image.source: https://github.com/aakuz/helm-debug
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+
 checksum:
   name_template: checksums.txt
 
