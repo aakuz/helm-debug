@@ -153,3 +153,16 @@ func TestHooksNeverRun(t *testing.T) {
 		t.Fatalf("rows = %+v", rows)
 	}
 }
+
+func TestHooksLookupErrorIsProblem(t *testing.T) {
+	c := newCluster(t)
+	// Pod is not served by the fake cluster, so the lookup fails with unknown-kind.
+	c.release("api", "prod", 1, common.StatusDeployed, "", &rspb.Hook{
+		Name: "p", Kind: "Pod", Manifest: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: p\n",
+	})
+	out, err := run(t, c, "prod", "hooks", "api")
+	wantProblems(t, err, true)
+	if !strings.Contains(out, "error:") {
+		t.Fatalf("out:\n%s", out)
+	}
+}

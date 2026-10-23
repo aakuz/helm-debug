@@ -28,6 +28,10 @@ type head struct {
 	} `json:"metadata"`
 }
 
+func (h head) object() Object {
+	return Object{APIVersion: h.APIVersion, Kind: h.Kind, Namespace: h.Metadata.Namespace, Name: h.Metadata.Name}
+}
+
 func parse(doc string) (head, bool) {
 	var h head
 	if err := yaml.Unmarshal([]byte(doc), &h); err != nil {
@@ -42,7 +46,7 @@ func Objects(rel *rspb.Release) []Object {
 	var objs []Object
 	for _, doc := range releaseutil.SplitManifests(rel.Manifest) {
 		if h, ok := parse(doc); ok {
-			objs = append(objs, Object{APIVersion: h.APIVersion, Kind: h.Kind, Namespace: h.Metadata.Namespace, Name: h.Metadata.Name})
+			objs = append(objs, h.object())
 		}
 	}
 	for _, hk := range rel.Hooks {
@@ -57,7 +61,9 @@ func Objects(rel *rspb.Release) []Object {
 		if len(events) == 0 {
 			events = []string{"hook"}
 		}
-		objs = append(objs, Object{APIVersion: h.APIVersion, Kind: h.Kind, Namespace: h.Metadata.Namespace, Name: h.Metadata.Name, Hook: events})
+		obj := h.object()
+		obj.Hook = events
+		objs = append(objs, obj)
 	}
 	sort.SliceStable(objs, func(i, j int) bool {
 		a, b := objs[i], objs[j]
@@ -95,7 +101,7 @@ func Hooks(rel *rspb.Release) []Hook {
 		if !ok {
 			continue
 		}
-		obj := Object{APIVersion: h.APIVersion, Kind: h.Kind, Namespace: h.Metadata.Namespace, Name: h.Metadata.Name}
+		obj := h.object()
 		for _, e := range hk.Events {
 			obj.Hook = append(obj.Hook, string(e))
 		}

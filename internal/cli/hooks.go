@@ -49,7 +49,7 @@ finished and its delete policy (hook-succeeded, hook-failed) asks for removal
 after that outcome. Objects kept by policy, or by Helm's default
 before-hook-creation, are not orphans.
 
-Exits with code 2 when orphans are found.`,
+Exits with code 2 when orphans are found or a hook object cannot be looked up.`,
 		Example: `  helm-debug hooks backend
   helm-debug hooks backend --revision 3 -o json`,
 		Args: cobra.ExactArgs(1),
@@ -71,7 +71,7 @@ Exits with code 2 when orphans are found.`,
 			if err := o.print(res, func(w io.Writer) { printHooks(o, w, res) }); err != nil {
 				return err
 			}
-			if slices.ContainsFunc(rows, func(r hookRow) bool { return r.Orphan }) {
+			if slices.ContainsFunc(rows, func(r hookRow) bool { return r.Orphan || r.Error != "" }) {
 				return ErrProblems
 			}
 			return nil
