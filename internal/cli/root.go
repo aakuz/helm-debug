@@ -171,6 +171,19 @@ func DisplayName() string {
 	return "helm-debug"
 }
 
+// newVersionCommand exists next to --version because the scratch container image has no shell,
+// so `docker run IMAGE version` is the way to check it.
+func newVersionCommand(o *Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the helm-debug version",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, _ []string) {
+			fmt.Fprintf(o.Out, "%s version %s\n", cmd.Root().DisplayName(), Version)
+		},
+	}
+}
+
 // NewRootCommand builds the command tree.
 func NewRootCommand(o *Options) *cobra.Command {
 	root := &cobra.Command{
@@ -203,14 +216,7 @@ func NewRootCommand(o *Options) *cobra.Command {
 	pf.BoolVar(&o.ShowSecrets, "show-secrets", false, "Show Secret data values instead of masking them (base64-encoded as stored; stringData is folded into data)")
 
 	root.AddCommand(
-		&cobra.Command{
-			Use:   "version",
-			Short: "Print the helm-debug version",
-			Args:  cobra.NoArgs,
-			Run: func(*cobra.Command, []string) {
-				fmt.Fprintf(o.Out, "%s version %s\n", root.DisplayName(), root.Version)
-			},
-		},
+		newVersionCommand(o),
 		newResourcesCommand(o),
 		newDriftCommand(o),
 		newDiffCommand(o),
