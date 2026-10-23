@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
 	"helm.sh/helm/v4/pkg/release/common"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type listJSON struct {
@@ -78,5 +81,24 @@ func TestListEmptyIsEmptyArray(t *testing.T) {
 	wantProblems(t, err, false)
 	if !strings.Contains(out, `"releases": []`) {
 		t.Fatalf("releases must serialize as [] not null:\n%s", out)
+	}
+}
+
+func TestListWarnsAboutUndecodableRecords(t *testing.T) {
+	c := listCluster(t)
+	_, err := c.kube.CoreV1().Secrets("prod").Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "sh.helm.release.v1.bad.v1", Namespace: "prod",
+			Labels: map[string]string{"owner": "helm", "name": "bad", "version": "1"},
+		},
+		Data: map[string][]byte{"release": []byte("garbage")},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := run(t, c, "prod", "list")
+	wantProblems(t, err, false)
+	if !strings.Contains(out, "warning: 1 release(s) could not be decoded") || !strings.Contains(out, "web") {
+		t.Fatalf("want the warning and the readable releases:\n%s", out)
 	}
 }

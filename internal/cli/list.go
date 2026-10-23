@@ -113,4 +113,7 @@ func printList(o *Options, w io.Writer, res listResult) {
 		t.add(r.Name, r.Namespace, fmt.Sprint(r.Revision), formatTime(r.Updated), o.paint(r.Status, statusColor(r.Status)), r.Chart, r.AppVersion)
 	}
 	t.flush()
+	if res.DecodeErrors > 0 {
+		fmt.Fprintf(w, "\n%s %d release(s) could not be decoded and are not listed\n", o.paint("warning:", yellow), res.DecodeErrors)
+	}
 }
