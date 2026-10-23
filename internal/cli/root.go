@@ -214,6 +214,7 @@ func NewRootCommand(o *Options) *cobra.Command {
 		newDeprecatedCommand(o),
 		newAuditCommand(o),
 		newHooksCommand(o),
+		newValuesCommand(o),
 	)
 	return root
 }
