@@ -17,6 +17,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`stuck`** – releases stuck in `pending-install/upgrade/rollback` and the command that unlocks them.
 - **`health`** – readiness of the release's Deployments and StatefulSets, crashing pods and recent warning events.
 - **`lost-found`** – objects that claim a Helm release which no longer exists in the cluster.
+- **`hooks`** – hooks of a release revision (event, weight, delete policy, last run) and leftover hook Jobs and Pods.
 
 The tool is strictly read-only. When it finds a problem it prints the `kubectl`/`helm` command
 that fixes it, but never runs it. Output is a table by default, or `-o json|yaml` for scripts
@@ -260,6 +261,22 @@ The scan makes one request per resource kind, so in a terminal it shows a `Scann
 status line on stderr. The line is erased when the scan ends and is not printed when stderr is
 redirected.
 
+### hooks
+
+```console
+$ helm-debug hooks backend -n prod
+Release prod/backend revision 2
+
+NAME             KIND  EVENT        WEIGHT  DELETE-POLICY   PHASE      LAST RUN  STATUS
+backend-migrate  Job   pre-upgrade  5       hook-succeeded  Succeeded  1h ago    orphan
+
+warning: 1 hook object(s) outlived their delete policy
+```
+
+`--revision N` inspects an older revision. A hook Job or Pod is an orphan when it still exists although
+its last run finished and its delete policy (`hook-succeeded` or `hook-failed`) asks for removal after
+that outcome. Objects kept by policy or by Helm's default `before-hook-creation` are not orphans.
+
 ### health
 
 ```console
@@ -444,7 +461,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 |---|---|
 | 0 | No problems (`diff` always exits 0 when it succeeds) |
 | 1 | Execution error (no access, release not found, bad flags, …) |
-| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`), lost resources (`lost-found`) |
+| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`), lost resources (`lost-found`), orphaned hook objects (`hooks`) |
 
 ## RBAC
 
@@ -457,6 +474,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 | `find` | `get` on the object; `list` + `get` on secrets (or configmaps) cluster-wide for the scan |
 | `stuck` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
 | `lost-found` | `list` on secrets (or configmaps) cluster-wide, `list` on every kind (metadata only) in the namespace, or cluster-wide with `-A`, plus API discovery |
+| `hooks` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the hook Jobs and Pods |
 | `health` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the Deployments and StatefulSets, `list` on pods and events in their namespaces, `get` on `pods/log` with `--logs` or `--all-logs` |
 
 ## Development

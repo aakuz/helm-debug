@@ -211,6 +211,7 @@ func NewRootCommand(o *Options) *cobra.Command {
 		newStuckCommand(o),
 		newHealthCommand(o),
 		newLostFoundCommand(o),
+		newHooksCommand(o),
 	)
 	return root
 }
