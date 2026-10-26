@@ -1,0 +1,8 @@
+Application argocd/web
+Source:    https://git.example.com/web.git path deploy @ main
+Sync:      Synced abc1234
+Health:    Healthy
+
+KIND        NAMESPACE  NAME  HOOK  SYNC    HEALTH   LIVE     TRACKING
+Deployment  prod       web   -     Synced  Healthy  present  ok
+Service     prod       web   -     Synced  Healthy  present  ok

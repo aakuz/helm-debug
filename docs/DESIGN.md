@@ -4,8 +4,9 @@
 
 `helm-debug` answers questions about Helm releases from the records Helm keeps in the cluster:
 what a release declares, what actually exists, who owns an object, what happened in past revisions
-and which releases are locked. It never changes the cluster (ADR-0003). It only reads releases
-that have storage records (ADR-0004).
+and which releases are locked. It never changes the cluster (ADR-0003). The release-record commands
+only read releases that have storage records; ArgoCD Applications are covered by the `argo` command
+group, which reads the Application CR (ADR-0005, which supersedes ADR-0004).
 
 ## Layout
 
@@ -173,6 +174,16 @@ longer than 53 characters; the storage namespace is `spec.storageNamespace`, els
 namespace. The history itself still comes from the release records, in the same format as `history`.
 Exit code 2: the Ready condition is missing or not True, the latest revision is failed or pending,
 or there are no release records.
+
+## ArgoCD Applications
+
+`argo resources` reads the Application CR: `spec.source`/`spec.sources` and `status` (sync, health,
+`operationState`, `resources`). LIVE is a get of each listed object. TRACKING comes from the
+annotation `argocd.argoproj.io/tracking-id` (app id `APP` or `APPNS_APP`), else the label
+`app.kubernetes.io/instance`. Hooks never count.
+Exit code 2: the app is not Synced or not Healthy, or a non-hook resource is OutOfSync, Degraded or
+Missing, not present in the cluster, or has tracking that is not ok. Unknown or empty statuses are not
+problems.
 
 ## Invocation modes
 

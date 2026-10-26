@@ -1,6 +1,6 @@
 # 0004. Only releases with Helm storage records (no ArgoCD)
 
-- Status: Accepted
+- Status: Superseded by [0005](0005-argocd-via-application-cr.md)
 - Date: 2026-10-18
 
 ## Context

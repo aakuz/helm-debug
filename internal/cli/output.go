@@ -130,11 +130,11 @@ func (t *table) flush() {
 
 func statusColor(status string) string {
 	switch status {
-	case "deployed", "present", "ok", "healthy", "in-sync", "added", "unchanged":
+	case "deployed", "present", "ok", "healthy", "in-sync", "added", "unchanged", "Synced", "Healthy":
 		return green
-	case "failed", "unhealthy", "absent", "error", "unknown-kind", "mismatch", "missing", "removed", "not-served":
+	case "failed", "unhealthy", "absent", "error", "unknown-kind", "mismatch", "missing", "removed", "not-served", "OutOfSync", "Degraded", "Missing", "Failed":
 		return red
-	case "pending-install", "pending-upgrade", "pending-rollback", "uninstalling", "drifted", "changed", "deprecated":
+	case "pending-install", "pending-upgrade", "pending-rollback", "uninstalling", "drifted", "changed", "deprecated", "Progressing", "Suspended":
 		return yellow
 	}
 	return ""
