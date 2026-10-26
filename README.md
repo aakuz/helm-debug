@@ -66,6 +66,15 @@ go install github.com/aakuz/helm-debug/cmd/helm-debug@latest
 
 To also use it as a kubectl plugin, copy or link the same binary as `kubectl-helm_debug`.
 
+### kubectl plugin (krew)
+
+```bash
+kubectl krew install helm-debug
+kubectl helm-debug list -A
+```
+
+Krew keeps it updated with `kubectl krew upgrade helm-debug`; remove with `kubectl krew uninstall helm-debug`.
+
 ### Helm plugin
 
 Pick the tarball for your OS and architecture (`linux|darwin|windows` × `amd64|arm64`):
