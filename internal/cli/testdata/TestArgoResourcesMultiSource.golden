@@ -1,0 +1,7 @@
+Application argocd/web
+Source:    https://charts.example.com chart web @ 1.2.3
+Source:    https://git.example.com/values.git path envs/prod @ main
+Sync:      Synced abc1234
+Health:    Healthy
+
+KIND  NAMESPACE  NAME  HOOK  SYNC  HEALTH  LIVE  TRACKING
