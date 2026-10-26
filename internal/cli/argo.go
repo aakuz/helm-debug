@@ -147,16 +147,14 @@ func runArgoResources(cmd *cobra.Command, o *Options, c *Clients, app string) (*
 	}
 	for _, s := range sources {
 		m, _ := s.(map[string]any)
-		field := func(k string) string { v, _ := m[k].(string); return v }
-		res.Sources = append(res.Sources, argoSource{RepoURL: field("repoURL"), Chart: field("chart"), Path: field("path"), TargetRevision: field("targetRevision")})
+		res.Sources = append(res.Sources, argoSource{RepoURL: stringField(m, "repoURL"), Chart: stringField(m, "chart"), Path: stringField(m, "path"), TargetRevision: stringField(m, "targetRevision")})
 	}
 
 	items, _, _ := unstructured.NestedSlice(obj.Object, "status", "resources")
 	res.Resources = make([]argoRow, len(items))
 	parallel(len(items), o.Concurrency, func(i int) {
 		m, _ := items[i].(map[string]any)
-		field := func(k string) string { v, _ := m[k].(string); return v }
-		row := argoRow{Group: field("group"), Version: field("version"), Kind: field("kind"), Namespace: field("namespace"), Name: field("name"), Sync: field("status")}
+		row := argoRow{Group: stringField(m, "group"), Version: stringField(m, "version"), Kind: stringField(m, "kind"), Namespace: stringField(m, "namespace"), Name: stringField(m, "name"), Sync: stringField(m, "status")}
 		row.Hook, _ = m["hook"].(bool)
 		if h, ok := m["health"].(map[string]any); ok {
 			row.Health, _ = h["status"].(string)
@@ -232,4 +230,9 @@ func printArgoResources(o *Options, w io.Writer, res *argoResult) {
 			sep = ""
 		}
 	}
+}
+
+func stringField(m map[string]any, k string) string {
+	v, _ := m[k].(string)
+	return v
 }
