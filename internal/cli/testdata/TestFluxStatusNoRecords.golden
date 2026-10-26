@@ -1,0 +1,9 @@
+HelmRelease:       flux/podinfo
+Release:           podinfo
+Release namespace: flux
+Storage namespace: store
+
+TYPE   STATUS  REASON  MESSAGE
+Ready  True    ok      -
+
+warning: no Helm release records found for "podinfo" in namespace store
