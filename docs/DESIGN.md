@@ -165,6 +165,15 @@ heartbeat) can be hidden; when more lines arrive between two polls than the wind
 `--all-logs` N), the lines in between are not shown. A read error is remembered per stream and printed again
 only when its text changes.
 
+## Flux HelmReleases
+
+`flux status` reads the HelmRelease CR only to resolve the release name and storage namespace and to
+show its conditions. The name is `spec.releaseName`, else `[targetNamespace-]name`, shortened when
+longer than 53 characters; the storage namespace is `spec.storageNamespace`, else the HelmRelease
+namespace. The history itself still comes from the release records, in the same format as `history`.
+Exit code 2: the Ready condition is missing or not True, the latest revision is failed or pending,
+or there are no release records.
+
 ## Invocation modes
 
 One `main`, built twice by goreleaser as `helm-debug` and `kubectl-helm_debug`, plus a Helm plugin

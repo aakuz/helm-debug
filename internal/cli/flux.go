@@ -94,16 +94,10 @@ or no release records exist.`,
 			case err != nil:
 				return err
 			default:
-				// rels is newest first: --max keeps the latest revisions, which are then printed oldest first like helm history.
-				for i, r := range rels {
-					if limit > 0 && i >= limit {
-						break
-					}
-					res.Revisions = append([]historyRow{toHistoryRow(r)}, res.Revisions...)
-				}
-				if st := rels[0].Info.Status; st.IsPending() || st == "failed" {
+				res.Revisions = historyRows(rels, limit)
+				if latestProblem(rels) {
 					problems = true
-					if st.IsPending() {
+					if rels[0].Info.Status.IsPending() {
 						res.Fix = unlockCommand(c.Store, rels[0].Name, storageNs, rels[0].Version)
 					}
 				}
@@ -140,6 +134,7 @@ func resolveHelmRelease(hr *unstructured.Unstructured) (name, namespace, storage
 		name = target + "-" + name
 	}
 	if len(name) > maxReleaseNameLen {
+		// Mirrors helm-controller's shortening: 40 chars of the name plus 12 hex chars of its SHA-256 stay under 53 and keep it unique.
 		sum := sha256.Sum256([]byte(name))
 		name = name[:40] + "-" + hex.EncodeToString(sum[:])[:12]
 	}
