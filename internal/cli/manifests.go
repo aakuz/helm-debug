@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -67,7 +68,7 @@ Manifests may contain Secrets: a warning is printed to stderr and content is nev
 				_, err = fmt.Fprint(o.Out, stdout)
 				return err
 			}
-			return writeDocs(o, outputDir, docs)
+			return writeDocs(o.Out, outputDir, docs)
 		},
 	}
 	cmd.Flags().IntVarP(&revision, "revision", "r", 0, "Release revision to inspect (default: latest)")
@@ -115,13 +116,14 @@ func docHead(doc string) manifestHead {
 	return h
 }
 
-func writeDocs(o *Options, dir string, docs []string) error {
+func writeDocs(out io.Writer, dir string, docs []string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	used := map[string]bool{}
 	for i, d := range docs {
 		base := docFileName(d, i+1)
+		// Sanitizing and lowercasing can map distinct objects (or a hook and an object) to one name.
 		name := base
 		for n := 2; used[name]; n++ {
 			name = fmt.Sprintf("%s-%d.yaml", strings.TrimSuffix(base, ".yaml"), n)
@@ -131,7 +133,7 @@ func writeDocs(o *Options, dir string, docs []string) error {
 		if err := writePrivateFile(path, []byte(d)); err != nil {
 			return err
 		}
-		fmt.Fprintln(o.Out, path)
+		fmt.Fprintln(out, path)
 	}
 	return nil
 }
