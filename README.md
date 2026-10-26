@@ -23,6 +23,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`values`** – user-supplied or computed values of a release revision, as a values file.
 - **`flux status`** – a Flux HelmRelease's conditions next to the history of the Helm release it manages.
 - **`manifests`** – the stored rendered manifest of a release revision, optionally with hooks or split into one file per object.
+- **`argo resources`** – resources an ArgoCD Application tracks, with sync, health, live state and Argo tracking metadata.
 
 The tool is strictly read-only. When it finds a problem it prints the `kubectl`/`helm` command
 that fixes it, but never runs it. Output is a table by default, or `-o json|yaml` for scripts
@@ -48,9 +49,9 @@ It works on Linux, macOS and Windows and can be run three ways:
 | `kubectl helm-debug …` | `kubectl-helm_debug` on `PATH` |
 | `helm debug …` | Helm plugin |
 
-> Releases deployed by ArgoCD are rendered with `helm template` and have no release records,
-> so there is nothing for this tool to read. It targets releases installed by the Helm CLI or
-> Flux helm-controller.
+> Helm-record commands do not apply to ArgoCD apps: ArgoCD renders charts with `helm template` and
+> keeps no release records, so there is nothing for them to read. Use `argo resources` for ArgoCD
+> Applications. The other commands target releases installed by the Helm CLI or Flux helm-controller.
 
 ## Install
 
@@ -576,6 +577,29 @@ Logs of backend-aaa (container main, previous run, new lines):
 ...
 ```
 
+### argo resources
+
+`argo resources APP -n NS` reads the ArgoCD Application `APP` (`argoproj.io`) from namespace `-n`, usually
+`argocd`, and lists the resources it tracks. SYNC and HEALTH come from the Application status, LIVE is a get
+of each object, and TRACKING is `ok`, `missing` or `mismatch` from the Argo tracking metadata: the annotation
+`argocd.argoproj.io/tracking-id` (app id `APP` or `NS_APP`), else the label `app.kubernetes.io/instance`.
+Hooks are listed, but they never count as problems.
+
+```bash
+helm-debug argo resources web -n argocd
+```
+
+```text
+Application argocd/web
+Source:    https://git.example.com/web.git path deploy @ main
+Sync:      Synced abc1234
+Health:    Healthy
+
+KIND        NAMESPACE  NAME  HOOK  SYNC    HEALTH   LIVE     TRACKING
+Deployment  prod       web   -     Synced  Healthy  present  ok
+Service     prod       web   -     Synced  Healthy  present  ok
+```
+
 ## Output and colors
 
 `table` output is meant for people; `-o json` and `-o yaml` carry the same data for scripts, with
@@ -606,7 +630,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 |---|---|
 | 0 | No problems (`diff` always exits 0 when it succeeds) |
 | 1 | Execution error (no access, release not found, bad flags, …) |
-| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), HelmRelease not Ready or its latest revision failed/pending or no records (`flux status`), releases that need cleanup (`audit`) |
+| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), HelmRelease not Ready or its latest revision failed/pending or no records (`flux status`), Application not Synced/Healthy or a tracked object out of sync, degraded, absent or not tracked (`argo resources`), releases that need cleanup (`audit`) |
 
 ## RBAC
 
@@ -624,6 +648,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 | `audit` | `list` on secrets (or configmaps) in the namespace, or cluster-wide with `-A`, and `get` on the objects of every latest revision |
 | `health` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the Deployments and StatefulSets, `list` on pods and events in their namespaces, `get` on `pods/log` with `--logs` or `--all-logs` |
 | `flux status` | `get` on helmreleases.helm.toolkit.fluxcd.io in the HelmRelease namespace, `list` on secrets (or configmaps) in the storage namespace |
+| `argo resources` | `get` on applications.argoproj.io in the Application namespace, `get` on every tracked object |
 
 ## Development
 
