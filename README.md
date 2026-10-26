@@ -21,6 +21,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`list`** – releases with their latest revision, status and chart, like `helm list`.
 - **`audit`** – revision counts and record sizes per release, and releases whose objects are all gone from the cluster.
 - **`values`** – user-supplied or computed values of a release revision, as a values file.
+- **`flux status`** – a Flux HelmRelease's conditions next to the history of the Helm release it manages.
 
 The tool is strictly read-only. When it finds a problem it prints the `kubectl`/`helm` command
 that fixes it, but never runs it. Output is a table by default, or `-o json|yaml` for scripts
@@ -339,6 +340,34 @@ merged with the user values. `-o json` prints JSON and `--output-file PATH` writ
 file (mode 0600) instead of stdout. Values may contain secrets, so a warning is printed to stderr;
 they are never logged, not even with `--verbose`.
 
+### flux status
+
+```bash
+helm-debug flux status podinfo -n flux
+```
+
+Resolves a Flux HelmRelease to the Helm release it manages: `spec.releaseName`, else `[targetNamespace-]name`
+shortened the way helm-controller does when it is longer than 53 characters. The release records are read from
+`spec.storageNamespace`, else from the HelmRelease namespace, so `-n` is the HelmRelease namespace. The output
+shows the HelmRelease conditions followed by the revision history, and prints the unlock command when the latest
+revision is pending.
+
+```text
+HelmRelease:       flux/podinfo
+Release:           apps-podinfo
+Release namespace: apps
+Storage namespace: flux
+
+TYPE         STATUS  REASON                   MESSAGE
+Ready        True    ReconciliationSucceeded  Helm upgrade succeeded
+Released     True    UpgradeSucceeded         Helm upgrade succeeded
+Reconciling  False   ReconciliationSucceeded  Helm upgrade succeeded
+
+REVISION  UPDATED              STATUS      CHART               APP VERSION  DESCRIPTION
+1         2026-10-18 03:00:00  superseded  apps-podinfo-1.1.0  2.0          -
+2         2026-10-18 04:00:00  deployed    apps-podinfo-1.2.0  2.0          -
+```
+
 ### deprecated
 
 ```console
@@ -561,7 +590,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 |---|---|
 | 0 | No problems (`diff` always exits 0 when it succeeds) |
 | 1 | Execution error (no access, release not found, bad flags, …) |
-| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), releases that need cleanup (`audit`) |
+| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), HelmRelease not Ready or its latest revision failed/pending or no records (`flux status`), releases that need cleanup (`audit`) |
 
 ## RBAC
 
@@ -578,6 +607,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 | `deprecated` | `get`/`list` on secrets (or configmaps) in the release namespace, API discovery (and `get` on `/version` unless `--target-version` is given) |
 | `audit` | `list` on secrets (or configmaps) in the namespace, or cluster-wide with `-A`, and `get` on the objects of every latest revision |
 | `health` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the Deployments and StatefulSets, `list` on pods and events in their namespaces, `get` on `pods/log` with `--logs` or `--all-logs` |
+| `flux status` | `get` on helmreleases.helm.toolkit.fluxcd.io in the HelmRelease namespace, `list` on secrets (or configmaps) in the storage namespace |
 
 ## Development
 
