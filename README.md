@@ -22,6 +22,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`audit`** – revision counts and record sizes per release, and releases whose objects are all gone from the cluster.
 - **`values`** – user-supplied or computed values of a release revision, as a values file.
 - **`flux status`** – a Flux HelmRelease's conditions next to the history of the Helm release it manages.
+- **`manifests`** – the stored rendered manifest of a release revision, optionally with hooks or split into one file per object.
 
 The tool is strictly read-only. When it finds a problem it prints the `kubectl`/`helm` command
 that fixes it, but never runs it. Output is a table by default, or `-o json|yaml` for scripts
@@ -367,6 +368,21 @@ REVISION  UPDATED              STATUS      CHART               APP VERSION  DESC
 1         2026-10-18 03:00:00  superseded  apps-podinfo-1.1.0  2.0          -
 2         2026-10-18 04:00:00  deployed    apps-podinfo-1.2.0  2.0          -
 ```
+
+### manifests
+
+```console
+$ helm-debug manifests backend -n prod --revision 2 --hooks --output-dir ./manifests
+```
+
+Prints the manifest Helm stored for a revision (default latest) as multi-document YAML, exactly as
+rendered and installed, like `helm get manifest`. It is the stored manifest, not live state; use
+`drift` to compare with the cluster. `--hooks` appends the hook manifests, each with its `# Source:`
+line, like `helm get hooks`. `--output-dir DIR` writes one file per object named
+`<kind>-<namespace>-<name>.yaml` (the namespace part is left out when the manifest does not set one;
+documents without kind or name become `document-N.yaml`), with mode 0600, and prints the written
+paths. `-o` does not apply: output is always YAML. When a Secret is included, a warning is printed to
+stderr, since Secret data is only base64-encoded. Exits with 1 if the release or revision does not exist.
 
 ### deprecated
 
