@@ -1,0 +1,86 @@
+# krew-release-bot template, rendered on each release; URLs must match the
+# cli archive names in .goreleaser.yaml.
+apiVersion: krew.googlecontainertools.github.com/v1alpha2
+kind: Plugin
+metadata:
+  name: helm-debug
+spec:
+  version: "{{ .TagName }}"
+  homepage: https://github.com/aakuz/helm-debug
+  shortDescription: Debug Helm releases read-only, straight from the cluster
+  description: |
+    Reads Helm release records straight from the cluster storage (the
+    sh.helm.release.v1.* Secrets or ConfigMaps) and compares them with live
+    objects, without running Helm operations. Shows declared resources, drift,
+    revision diffs, history, stuck releases, hooks, health, orphaned objects,
+    cluster hygiene and release values.
+
+    The plugin is strictly read-only: when it finds a problem it prints the
+    kubectl or helm command that fixes it, but never runs it.
+  platforms:
+    - selector:
+        matchLabels:
+          os: linux
+          arch: amd64
+      {{addURIAndSha "https://github.com/aakuz/helm-debug/releases/download/{{ .TagName }}/helm-debug_{{ .TagName }}_linux_amd64.tar.gz" .TagName | indent 6}}
+      files:
+        - from: kubectl-helm_debug
+          to: .
+        - from: LICENSE
+          to: .
+      bin: kubectl-helm_debug
+    - selector:
+        matchLabels:
+          os: linux
+          arch: arm64
+      {{addURIAndSha "https://github.com/aakuz/helm-debug/releases/download/{{ .TagName }}/helm-debug_{{ .TagName }}_linux_arm64.tar.gz" .TagName | indent 6}}
+      files:
+        - from: kubectl-helm_debug
+          to: .
+        - from: LICENSE
+          to: .
+      bin: kubectl-helm_debug
+    - selector:
+        matchLabels:
+          os: darwin
+          arch: amd64
+      {{addURIAndSha "https://github.com/aakuz/helm-debug/releases/download/{{ .TagName }}/helm-debug_{{ .TagName }}_darwin_amd64.tar.gz" .TagName | indent 6}}
+      files:
+        - from: kubectl-helm_debug
+          to: .
+        - from: LICENSE
+          to: .
+      bin: kubectl-helm_debug
+    - selector:
+        matchLabels:
+          os: darwin
+          arch: arm64
+      {{addURIAndSha "https://github.com/aakuz/helm-debug/releases/download/{{ .TagName }}/helm-debug_{{ .TagName }}_darwin_arm64.tar.gz" .TagName | indent 6}}
+      files:
+        - from: kubectl-helm_debug
+          to: .
+        - from: LICENSE
+          to: .
+      bin: kubectl-helm_debug
+    - selector:
+        matchLabels:
+          os: windows
+          arch: amd64
+      {{addURIAndSha "https://github.com/aakuz/helm-debug/releases/download/{{ .TagName }}/helm-debug_{{ .TagName }}_windows_amd64.zip" .TagName | indent 6}}
+      files:
+        - from: kubectl-helm_debug.exe
+          to: .
+        - from: LICENSE
+          to: .
+      bin: kubectl-helm_debug.exe
+    - selector:
+        matchLabels:
+          os: windows
+          arch: arm64
+      {{addURIAndSha "https://github.com/aakuz/helm-debug/releases/download/{{ .TagName }}/helm-debug_{{ .TagName }}_windows_arm64.zip" .TagName | indent 6}}
+      files:
+        - from: kubectl-helm_debug.exe
+          to: .
+        - from: LICENSE
+          to: .
+      bin: kubectl-helm_debug.exe
