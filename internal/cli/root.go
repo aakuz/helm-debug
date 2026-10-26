@@ -230,6 +230,7 @@ func NewRootCommand(o *Options) *cobra.Command {
 		newHooksCommand(o),
 		newListCommand(o),
 		newValuesCommand(o),
+		newFluxCommand(o),
 	)
 	return root
 }

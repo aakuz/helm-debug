@@ -1,0 +1,11 @@
+HelmRelease:       flux/podinfo
+Release:           podinfo
+Release namespace: flux
+Storage namespace: flux
+
+TYPE   STATUS  REASON         MESSAGE
+Ready  False   UpgradeFailed  Helm upgrade failed: timed out waiting for the condition
+
+REVISION  UPDATED              STATUS    CHART          APP VERSION  DESCRIPTION
+1         2026-10-18 03:00:00  deployed  podinfo-1.1.0  2.0          -
+2         2026-10-18 04:00:00  failed    podinfo-1.2.0  2.0          Upgrade "podinfo" failed: timed out waiting for the condition

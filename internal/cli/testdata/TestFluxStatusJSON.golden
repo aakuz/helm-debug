@@ -1,0 +1,23 @@
+{
+  "helmRelease": "flux/podinfo",
+  "releaseName": "podinfo",
+  "releaseNamespace": "flux",
+  "storageNamespace": "flux",
+  "conditions": [
+    {
+      "type": "Ready",
+      "status": "True",
+      "reason": "ok",
+      "message": "fine"
+    }
+  ],
+  "revisions": [
+    {
+      "revision": 1,
+      "updated": "2026-10-18T03:00:00Z",
+      "status": "deployed",
+      "chart": "podinfo-1.1.0",
+      "appVersion": "2.0"
+    }
+  ]
+}

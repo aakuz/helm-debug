@@ -143,7 +143,12 @@ func (c *cluster) clients(namespace string) *Clients {
 	if err := metav1.AddMetaToScheme(scheme); err != nil {
 		c.t.Fatal(err)
 	}
-	mapper := meta.NewDefaultRESTMapper(nil)
+	// Preferred versions let RESTMapping(groupKind) work without naming a version, as with the real discovery mapper.
+	var preferred []schema.GroupVersion
+	for _, k := range c.extraKinds {
+		preferred = append(preferred, k.gvk.GroupVersion())
+	}
+	mapper := meta.NewDefaultRESTMapper(preferred)
 	listKinds := map[schema.GroupVersionResource]string{}
 	var resources []*metav1.APIResourceList
 	for _, k := range append(slices.Clone(kinds), c.extraKinds...) {

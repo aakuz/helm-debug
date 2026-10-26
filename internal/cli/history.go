@@ -44,17 +44,11 @@ Exits with code 2 when the latest revision is failed or pending.`,
 				return err
 			}
 			res := historyResult{Release: args[0], Namespace: c.Namespace}
-			// rels is newest first: --max keeps the latest revisions, which are then printed oldest first like helm history.
-			for i, r := range rels {
-				if limit > 0 && i >= limit {
-					break
-				}
-				res.Revisions = append([]historyRow{toHistoryRow(r)}, res.Revisions...)
-			}
+			res.Revisions = historyRows(rels, limit)
 			if err := o.print(res, func(w io.Writer) { printHistory(o, w, res) }); err != nil {
 				return err
 			}
-			if st := rels[0].Info.Status; st.IsPending() || st == "failed" {
+			if latestProblem(rels) {
 				return ErrProblems
 			}
 			return nil
@@ -62,6 +56,24 @@ Exits with code 2 when the latest revision is failed or pending.`,
 	}
 	cmd.Flags().IntVar(&limit, "max", 0, "Maximum number of revisions to show (0 = all)")
 	return cmd
+}
+
+// historyRows takes newest-first rels: --max keeps the latest revisions, which are then returned oldest first like helm history.
+func historyRows(rels []*rspb.Release, limit int) []historyRow {
+	rows := []historyRow{}
+	for i, r := range rels {
+		if limit > 0 && i >= limit {
+			break
+		}
+		rows = append([]historyRow{toHistoryRow(r)}, rows...)
+	}
+	return rows
+}
+
+// latestProblem reports whether the newest revision (rels[0]) is failed or pending.
+func latestProblem(rels []*rspb.Release) bool {
+	st := rels[0].Info.Status
+	return st.IsPending() || st == "failed"
 }
 
 func toHistoryRow(r *rspb.Release) historyRow {
