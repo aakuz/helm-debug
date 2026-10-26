@@ -20,6 +20,7 @@ builds:
     binary: kubectl-helm_debug
 
 archives:
+  # Named by tag: .krew.yaml builds these URLs from .TagName and cannot strip the "v".
   - id: cli
     ids: [helm-debug, kubectl-plugin]
     name_template: "helm-debug_{{ .Tag }}_{{ .Os }}_{{ .Arch }}"

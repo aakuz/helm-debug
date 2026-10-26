@@ -1,3 +1,5 @@
+# krew-release-bot template, rendered on each release; URLs must match the
+# cli archive names in .goreleaser.yaml.
 apiVersion: krew.googlecontainertools.github.com/v1alpha2
 kind: Plugin
 metadata:

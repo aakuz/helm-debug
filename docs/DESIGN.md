@@ -168,7 +168,8 @@ only when its text changes.
 ## Invocation modes
 
 One `main`, built twice by goreleaser as `helm-debug` and `kubectl-helm_debug`, plus a Helm plugin
-tarball that bundles `helm-debug` with a legacy-format `plugin.yaml` (ADR-0001). Help text uses
+tarball that bundles `helm-debug` with a legacy-format `plugin.yaml` (ADR-0001). The kubectl plugin is
+also indexed in krew as `helm-debug`; krew-release-bot renders `.krew.yaml` on each release. Help text uses
 the name the tool was invoked by:
 
 - `kubectl-*` in `argv[0]` → `kubectl helm-debug`
