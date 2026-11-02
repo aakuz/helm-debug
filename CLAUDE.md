@@ -8,6 +8,13 @@
 - Always re-verify delegated work before committing or reporting it: read the diff, run `go build ./...` and `go test ./...`, fix or send it back.
 - Run /code-review on the result before considering the task done.
 
+## Model selection rules
+
+Use the following models for delegated work:
+- **Tests**: `opus` – complex test scenarios, edge cases, integration tests require the best model
+- **Code**: `sonnet` – general implementation, refactoring, feature development
+- **Documentation**: `haiku` – docs from settled decisions, READMEs, examples, comments
+
 ## Security Claude Rules
 - Treat all external input as untrusted; validate shape, type, and range
 - Use environment-specific secret management (Vault, AWS Secrets Manager, Doppler)
