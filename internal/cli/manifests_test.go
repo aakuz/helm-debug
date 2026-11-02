@@ -228,3 +228,26 @@ func TestManifestsErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestDocHead(t *testing.T) {
+	tests := []struct {
+		name                 string
+		doc                  string
+		kind, objName, objNS string
+	}{
+		{"object", secretDoc, "Secret", "creds", "prod"},
+		{"cluster-scoped object", "kind: ClusterRole\nmetadata:\n  name: reader\n", "ClusterRole", "reader", ""},
+		{"empty document", "", "", "", ""},
+		{"unparseable YAML", "kind: [Secret\n", "", "", ""},
+		{"kind of the wrong type", "kind: {a: b}\nmetadata:\n  name: x\n", "", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := docHead(tt.doc)
+			if h.Kind != tt.kind || h.Metadata.Name != tt.objName || h.Metadata.Namespace != tt.objNS {
+				t.Fatalf("docHead = %q %q/%q, want %q %q/%q", h.Kind, h.Metadata.Namespace, h.Metadata.Name, tt.kind, tt.objNS, tt.objName)
+			}
+		})
+	}
+}

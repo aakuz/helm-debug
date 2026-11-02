@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -163,5 +165,47 @@ func TestValuesOutputFileTightensExistingMode(t *testing.T) {
 	}
 	if fi, _ := os.Stat(path); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Errorf("mode = %v, want 0600", fi.Mode().Perm())
+	}
+}
+
+func TestWritePrivateFile(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(t *testing.T, path string)
+	}{
+		{"new file", func(*testing.T, string) {}},
+		{"existing 0644 file is tightened and truncated", func(t *testing.T, path string) {
+			if err := os.WriteFile(path, []byte("a much longer previous content\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "values.yaml")
+			tt.prepare(t, path)
+			if err := writePrivateFile(path, []byte("new\n")); err != nil {
+				t.Fatal(err)
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(b) != "new\n" {
+				t.Errorf("content = %q, want %q", b, "new\n")
+			}
+			if fi, _ := os.Stat(path); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+				t.Errorf("mode = %v, want 0600", fi.Mode().Perm())
+			}
+		})
+	}
+}
+
+func TestWritePrivateFileMissingDirectory(t *testing.T) {
+	t.Parallel()
+	err := writePrivateFile(filepath.Join(t.TempDir(), "missing", "values.yaml"), []byte("x"))
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("err = %v, want fs.ErrNotExist", err)
 	}
 }

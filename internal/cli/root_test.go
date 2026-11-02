@@ -5,11 +5,14 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/go-logr/logr/funcr"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"k8s.io/klog/v2"
 )
 
 var helmEnv = []string{
@@ -299,5 +302,54 @@ func TestVersionCommandPrintsReleaseVersion(t *testing.T) {
 	wantProblems(t, err, false)
 	if !strings.Contains(out, "1.2.3") {
 		t.Fatalf("got %q", out)
+	}
+}
+
+func TestDeprecationWarningFilter(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+		want    string
+	}{
+		{"deprecation dropped", "policy/v1beta1 PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+", ""},
+		{"other warning passed", "spec.template.spec.containers[0].env[0]: hides previous definition", "Warning: spec.template.spec.containers[0].env[0]: hides previous definition"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var got []string
+			logger := funcr.New(func(_, args string) { got = append(got, args) }, funcr.Options{})
+			deprecationWarningFilter{}.HandleWarningHeaderWithContext(klog.NewContext(context.Background(), logger), 299, "", tt.message)
+			joined := strings.Join(got, "\n")
+			if tt.want == "" && joined != "" {
+				t.Fatalf("warning must be dropped, logged %q", joined)
+			}
+			if tt.want != "" && !strings.Contains(joined, tt.want) {
+				t.Fatalf("logged %q, want it to contain %q", joined, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewOptionsInstallsWarningFilter(t *testing.T) {
+	cleanEnv(t)
+	kubeconfig := filepath.Join(t.TempDir(), "config")
+	const cfg = `apiVersion: v1
+kind: Config
+clusters: [{name: c, cluster: {server: "https://127.0.0.1:6443"}}]
+users: [{name: u, user: {}}]
+contexts: [{name: x, context: {cluster: c, user: u}}]
+current-context: x
+`
+	if err := os.WriteFile(kubeconfig, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", kubeconfig)
+	rc, err := NewOptions().Flags.ToRESTConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rc.WarningHandlerWithContext.(deprecationWarningFilter); !ok {
+		t.Fatalf("WarningHandlerWithContext = %T, want deprecationWarningFilter", rc.WarningHandlerWithContext)
 	}
 }
