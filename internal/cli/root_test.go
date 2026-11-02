@@ -309,10 +309,10 @@ func TestDeprecationWarningFilter(t *testing.T) {
 	tests := []struct {
 		name    string
 		message string
-		want    string
+		dropped bool
 	}{
-		{"deprecation dropped", "policy/v1beta1 PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+", ""},
-		{"other warning passed", "spec.template.spec.containers[0].env[0]: hides previous definition", "Warning: spec.template.spec.containers[0].env[0]: hides previous definition"},
+		{"deprecation dropped", "policy/v1beta1 PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+", true},
+		{"other warning passed", "spec.template.spec.containers[0].env[0]: hides previous definition", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -321,11 +321,11 @@ func TestDeprecationWarningFilter(t *testing.T) {
 			logger := funcr.New(func(_, args string) { got = append(got, args) }, funcr.Options{})
 			deprecationWarningFilter{}.HandleWarningHeaderWithContext(klog.NewContext(context.Background(), logger), 299, "", tt.message)
 			joined := strings.Join(got, "\n")
-			if tt.want == "" && joined != "" {
+			if tt.dropped && joined != "" {
 				t.Fatalf("warning must be dropped, logged %q", joined)
 			}
-			if tt.want != "" && !strings.Contains(joined, tt.want) {
-				t.Fatalf("logged %q, want it to contain %q", joined, tt.want)
+			if want := "Warning: " + tt.message; !tt.dropped && !strings.Contains(joined, want) {
+				t.Fatalf("logged %q, want it to contain %q", joined, want)
 			}
 		})
 	}

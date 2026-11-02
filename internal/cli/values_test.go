@@ -195,10 +195,25 @@ func TestWritePrivateFile(t *testing.T) {
 			if string(b) != "new\n" {
 				t.Errorf("content = %q, want %q", b, "new\n")
 			}
-			if fi, _ := os.Stat(path); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+			fi, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 				t.Errorf("mode = %v, want 0600", fi.Mode().Perm())
 			}
 		})
+	}
+}
+
+// A non-root user can open /dev/null for writing but not chmod it, which exercises the Chmod error.
+func TestWritePrivateFileChmodError(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a Unix non-root user")
+	}
+	if err := writePrivateFile(os.DevNull, []byte("x")); !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("err = %v, want fs.ErrPermission", err)
 	}
 }
 

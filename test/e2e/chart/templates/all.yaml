@@ -3,6 +3,7 @@ kind: ConfigMap
 metadata:
   name: {{ .Release.Name }}-config
   labels:
+    # Argo tracks objects by this label when they carry no tracking-id annotation.
     app.kubernetes.io/instance: {{ .Release.Name }}
 data:
   key: value
