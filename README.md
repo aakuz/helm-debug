@@ -23,6 +23,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`values`** – user-supplied or computed values of a release revision, as a values file.
 - **`flux status`** – a Flux HelmRelease's conditions next to the history of the Helm release it manages.
 - **`manifests`** – the stored rendered manifest of a release revision, optionally with hooks or split into one file per object.
+- **`deprecated`** – apiVersions in a release revision that are removed or deprecated at a target Kubernetes version.
 - **`argo resources`** – resources an ArgoCD Application tracks, with sync, health, live state and Argo tracking metadata.
 
 The tool is strictly read-only. When it finds a problem it prints the `kubectl`/`helm` command
@@ -40,6 +41,9 @@ helm-debug drift backend -n prod       # did someone edit the objects by hand
 helm-debug health backend -n prod      # are the workloads rolled out and are pods crashing
 helm-debug find deploy/backend -A      # which release owns this object
 ```
+
+[Helm troubleshooting with helm-debug](docs/TROUBLESHOOTING.md) maps about 620 common Helm
+debugging questions to the commands that answer them, and links the issues that plan the rest.
 
 It works on Linux, macOS and Windows and can be run three ways:
 
@@ -448,8 +452,8 @@ Checks the Deployments and StatefulSets declared by a release revision; hooks an
 ignored. For a Deployment, the rollout is incomplete when the controller has not observed the
 current generation, replicas are not yet updated or available, old replicas are still pending
 termination, or the rollout reports `ProgressDeadlineExceeded`. For a StatefulSet, it is incomplete
-when the generation is not observed, replicas are not ready, or replicas below the
-`rollingUpdate.partition` are not updated (the update check is skipped for `OnDelete`).
+when the generation is not observed, replicas are not ready, or the replicas at or above the
+`rollingUpdate.partition` are not all updated (the update check is skipped for `OnDelete`).
 
 Pods are found through the workload's label selector and listed under "Pods with problems" only
 when they failed, or a container is waiting with `CrashLoopBackOff`, `ImagePullBackOff`,
@@ -608,9 +612,9 @@ no colors. In a terminal, `table` output is highlighted:
 | Element | Color |
 |---|---|
 | Resource names in `diff` and `drift` | bold magenta |
-| Healthy statuses (`deployed`, `present`, `ok`, `in-sync`, `added`) | green |
-| Problem statuses (`failed`, `absent`, `missing`, `mismatch`, `unknown-kind`, `removed`) | red |
-| In-progress or modified statuses (`pending-*`, `uninstalling`, `drifted`, `changed`) | yellow |
+| Healthy statuses (`deployed`, `present`, `ok`, `healthy`, `in-sync`, `added`, `unchanged`, `Synced`, `Healthy`) | green |
+| Problem statuses (`failed`, `unhealthy`, `absent`, `error`, `missing`, `mismatch`, `unknown-kind`, `removed`, `not-served`, `orphan`, `OutOfSync`, `Degraded`, `Missing`, `Failed`) | red |
+| In-progress or modified statuses (`pending-*`, `uninstalling`, `drifted`, `changed`, `deprecated`, `Progressing`, `Suspended`) | yellow |
 | Added / removed lines and `@@` hunk headers in diffs | green / red / cyan |
 
 Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` is set.
@@ -630,7 +634,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 |---|---|
 | 0 | No problems (`diff` always exits 0 when it succeeds) |
 | 1 | Execution error (no access, release not found, bad flags, …) |
-| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), HelmRelease not Ready or its latest revision failed/pending or no records (`flux status`), Application not Synced/Healthy or a tracked object out of sync, degraded, absent or not tracked (`argo resources`), releases that need cleanup (`audit`) |
+| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), problem release status, workload not rolled out or problem pods, or `--wait` timed out (`health`), HelmRelease not Ready or its latest revision failed/pending or no records (`flux status`), Application not Synced/Healthy or a tracked object out of sync, degraded, absent or not tracked (`argo resources`), releases that need cleanup (`audit`) |
 
 ## RBAC
 
@@ -640,6 +644,9 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 | `drift` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on every declared object |
 | `diff` | `list` on secrets (or configmaps) in the release namespace |
 | `history` | `list` on secrets (or configmaps) in the release namespace |
+| `values` | `list` on secrets (or configmaps) in the release namespace |
+| `manifests` | `list` on secrets (or configmaps) in the release namespace |
+| `list` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
 | `find` | `get` on the object; `list` + `get` on secrets (or configmaps) cluster-wide for the scan |
 | `stuck` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
 | `lost-found` | `list` on secrets (or configmaps) cluster-wide, `list` on every kind (metadata only) in the namespace, or cluster-wide with `-A`, plus API discovery |

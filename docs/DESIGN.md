@@ -27,7 +27,7 @@ static REST mapper.
 - **Decoding** is done by the Helm SDK storage drivers (`driver.NewSecrets` / `driver.NewConfigMaps`),
   so every format Helm 3 and Helm 4 write is supported without custom code (ADR-0002).
 - **History of one release** uses `driver.Query(name=<release>, owner=helm)` in the release namespace.
-- **Cluster-wide scans** (`find`, `stuck`) avoid loading every record into memory at once:
+- **Cluster-wide scans** (`find`, `stuck`, `list`, `lost-found`) avoid loading every record into memory at once:
   1. List record *metadata* only (`metadata.k8s.io` PartialObjectMetadata, `owner=helm`, pages of
      500), which gives release name and revision from labels without the `release` payload.
   2. Reduce to the latest revision per release, unless `--all-revisions` is set.
