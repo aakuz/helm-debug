@@ -6,8 +6,8 @@ command answers it. When `helm-debug` cannot answer a question yet, the row link
 the answer is planned.
 
 `helm-debug` is read-only: it reads release records (`sh.helm.release.v1.*` Secrets or ConfigMaps)
-and live objects, and prints fixes instead of running them. It does not render charts, talk to chart
-repositories or run Helm operations, so questions about those are answered with the Helm CLI.
+and live objects, and prints fixes instead of running them. It does not render charts (except `helm-debug lint`, which
+renders a local chart client-side), talk to chart repositories or run Helm operations, so questions about those are answered with the Helm CLI.
 
 | Mark | Meaning |
 |---|---|
@@ -75,12 +75,12 @@ check `stuck` (it suggests a rollback to the last good revision) and back up the
 |---|---|---|
 | 31 | Where to start with `UPGRADE FAILED`? | ✅ `history REL` (reason), then `diff REL N-1 N`, `resources`, `health` |
 | 32 | Which commands first? | ✅ see [Triage path](#triage-path) |
-| 33–34 | When is `helm lint` useful, what does it check? | ➖ chart structure and rendering, not the cluster; template error context: #43 |
-| 35 | When to use `helm template --debug`? | ➖ rendering; rendered YAML around an error: #43 |
+| 33–34 | When is `helm lint` useful, what does it check? | ➖ chart structure and rendering, not the cluster; template error context: `helm-debug lint CHART` |
+| 35 | When to use `helm template --debug`? | ➖ rendering; rendered YAML around an error: `helm-debug lint CHART` |
 | 36–37 | `helm template` vs `--dry-run`, client vs server dry-run? | ➖ Helm CLI; helm-debug does not render charts |
 | 38–39 | Why does a chart pass `template`/YAML checks but fail on install? | 🟡 API validation, CRDs, admission, ownership; `resources` shows unknown kinds and ownership, `deprecated` removed APIs, webhooks: #57 |
 | 40 | Check a chart against the real API server without installing? | ➖ `helm install --dry-run=server`; preview against the release: #17 |
-| 41–45 | Helm vs Kubernetes, rendering vs API, Helm vs application, chart vs values, Helm vs webhook? | 🟡 `history` holds the API error text; `health` shows app failures; webhook detail: #57; template errors: #43 |
+| 41–45 | Helm vs Kubernetes, rendering vs API, Helm vs application, chart vs values, Helm vs webhook? | 🟡 `history` holds the API error text; `health` shows app failures; webhook detail: #57; template errors: `helm-debug lint CHART` |
 | 46 | First Kubernetes object that really broke? | 🟡 `resources`, `health`; what `--wait` was waiting for: #46 |
 | 47 | Minimal reproduction of a broken chart? | 🟡 `values REL --output-file v.yaml` + `manifests REL --output-dir dir` give the exact inputs and output |
 | 48 | Expected vs installed manifest? | ✅ `drift REL` (stored vs live), `diff REL A B` (between revisions) |
@@ -159,7 +159,7 @@ check `stuck` (it suggests a rollback to the last good revision) and back up the
 | 151 | Final value of one parameter? | ✅ `values REL --all` (computed values as Helm stored them) |
 | 152–157 | Precedence of values.yaml, `-f`, `--set`; map and list merging? | ➖ Helm concept; the stored result is in `values --all` |
 | 158–163 | `--set` vs `--set-string`, `0123`, `"false"` vs `false`, commas, dots, arrays? | ➖ Helm CLI; check the stored type with `values -o json` |
-| 164–166 | Wrong YAML type, `cannot overwrite table with non table`, `<nil>`? | ➖ rendering errors; context around the error: #43 |
+| 164–166 | Wrong YAML type, `cannot overwrite table with non table`, `<nil>`? | ➖ rendering errors; context around the error: `helm-debug lint CHART` |
 | 167–172 | `default`, nil pointers, safe nested access, `required`? | ➖ template authoring |
 | 173–176 | `values.schema.json`, `--skip-schema-validation`? | ➖ Helm CLI |
 | 177–179 | Typos in values keys, unknown keys, unused values? | 🔧 #51 |
@@ -169,9 +169,9 @@ check `stuck` (it suggests a rollback to the last good revision) and back up the
 
 | # | Question | Answer with helm-debug |
 |---|---|---|
-| 181–184 | `executing ... at ...`, `can't evaluate field`, `wrong type`, `nil pointer`? | ➖ rendering errors; #43 shows the rendered context |
+| 181–184 | `executing ... at ...`, `can't evaluate field`, `wrong type`, `nil pointer`? | ✅ `helm-debug lint CHART` shows the failing template and the rendered context |
 | 185–188, 192–204 | Pipelines, `include` vs `template`, `indent`/`nindent`, `toYaml`, `quote`, `range`, `$`, `with`, helpers, `tpl`? | ➖ template authoring; Helm docs "Chart Template Guide" |
-| 189–191 | Bad indentation, `did not find expected key`, rendered output of a broken section? | 🔧 #43 |
+| 189–191 | Bad indentation, `did not find expected key`, rendered output of a broken section? | ✅ `helm-debug lint CHART` shows the rendered lines around the line the parser names |
 | 205–209 | `.Capabilities`, other Kubernetes versions, local vs in-cluster rendering? | 🟡 `deprecated --target-version` checks the stored result; rendering itself is ➖ |
 
 ## 9. lookup

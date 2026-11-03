@@ -101,6 +101,12 @@ for f in "$TMP"/manifests/*.yaml; do
   check "manifests --output-dir $(basename "$f") has mode 600" test "$(mode "$f")" = 600
 done
 expect 1 "$BIN" manifests demo -n "$NS" --revision 99
+expect_out 0 'No problems found in chart demo' "$BIN" lint "$CHART"
+mkdir -p "$TMP/broken/templates"
+cp "$CHART/Chart.yaml" "$TMP/broken/"
+printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\ndata:\n  a: b\n bad: c\n' >"$TMP/broken/templates/cm.yaml"
+expect_out 2 '> 6 \|   a: b' "$BIN" lint "$TMP/broken"
+expect 1 "$BIN" lint "$TMP/nope"
 expect 0 "$BIN" health demo -n "$NS"
 expect 0 "$BIN" health demo -n "$NS" --wait --timeout 60s
 expect 0 "$BIN" hooks demo -n "$NS"

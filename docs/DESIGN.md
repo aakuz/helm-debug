@@ -6,7 +6,8 @@
 what a release declares, what actually exists, who owns an object, what happened in past revisions
 and which releases are locked. It never changes the cluster (ADR-0003). The release-record commands
 only read releases that have storage records; ArgoCD Applications are covered by the `argo` command
-group, which reads the Application CR (ADR-0005, which supersedes ADR-0004).
+group, which reads the Application CR (ADR-0005, which supersedes ADR-0004). The one exception is `lint`,
+which renders a local chart client-side and never contacts the cluster (ADR-0006).
 
 ## Layout
 
@@ -184,6 +185,17 @@ annotation `argocd.argoproj.io/tracking-id` (app id `APP` or `APPNS_APP`), else 
 Exit code 2: the app is not Synced or not Healthy, or a non-hook resource is OutOfSync, Degraded or
 Missing, not present in the cluster, or has tracking that is not ok. Unknown or empty statuses are not
 problems.
+
+## Lint
+
+`lint` renders a local chart (directory or `.tgz`) with the Helm SDK engine, as `helm template` does, and
+never contacts the cluster: `lookup` is empty and `.Capabilities` holds Helm's defaults. Helm stops at the
+first failing template and names only a file and line of output, so when the chart does not render as a
+whole, each executable template is rendered on its own, and every problem is reported with the rendered
+lines around it. The render step lives in `internal/render`, so the upgrade diff (#17) can reuse it.
+Values come from local `-f` files and `--set` only. Secret values in context lines are masked, and exit
+code 2 means problems were found, 1 means the chart or values could not be loaded. See
+[ADR 0006](adr/0006-client-side-chart-rendering.md).
 
 ## Invocation modes
 
