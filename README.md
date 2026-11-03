@@ -23,6 +23,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`values`** – user-supplied or computed values of a release revision, as a values file.
 - **`flux status`** – a Flux HelmRelease's conditions next to the history of the Helm release it manages.
 - **`manifests`** – the stored rendered manifest of a release revision, optionally with hooks or split into one file per object.
+- **`notes`** – the stored NOTES.txt of a release revision, like `helm get notes`.
 - **`lint`** – render a local chart and show the rendered YAML around every template error and invalid document.
 - **`deprecated`** – apiVersions in a release revision that are removed or deprecated at a target Kubernetes version.
 - **`argo resources`** – resources an ArgoCD Application tracks, with sync, health, live state and Argo tracking metadata.
@@ -390,6 +391,18 @@ documents without kind or name become `document-N.yaml`), with mode 0600, and pr
 paths. `-o` does not apply: output is always YAML. When a Secret is included, a warning is printed to
 stderr, since Secret data is only base64-encoded. Exits with 1 if the release or revision does not exist.
 
+### notes
+
+```console
+$ helm-debug notes backend -n prod --revision 2
+```
+
+Prints the NOTES.txt Helm stored for a revision (default latest) as plain text, like `helm get notes`
+but without its `NOTES:` header. `-o json` and `-o yaml` print `{release, namespace, revision, notes}`.
+Notes are chart-controlled text, so terminal escape sequences, control characters (except newline and
+tab) and Unicode format characters are removed in every output format. Empty notes print nothing and
+exit 0. Exits with 1 if the release or revision does not exist.
+
 ### lint
 
 ```bash
@@ -686,6 +699,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 | `history` | `list` on secrets (or configmaps) in the release namespace |
 | `values` | `list` on secrets (or configmaps) in the release namespace |
 | `manifests` | `list` on secrets (or configmaps) in the release namespace |
+| `notes` | `list` on secrets (or configmaps) in the release namespace |
 | `lint` | Nothing: the chart is rendered locally and the cluster is not contacted |
 | `list` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
 | `find` | `get` on the object; `list` + `get` on secrets (or configmaps) cluster-wide for the scan |

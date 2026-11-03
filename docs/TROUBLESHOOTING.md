@@ -63,7 +63,7 @@ check `stuck` (it suggests a rollback to the last good revision) and back up the
 | 23 | `helm get values` vs the original values.yaml? | ✅ `values` = user-supplied values only; `values --all` = merged with chart defaults |
 | 24 | Values together with chart defaults? | ✅ `values REL --all` |
 | 25 | Hooks of a release? | ✅ `hooks REL`, `manifests REL --hooks` |
-| 26 | Release notes? | 🔧 #59 (`helm get notes` meanwhile) |
+| 26 | Release notes? | ✅ `notes REL [--revision N]` |
 | 27 | Installed chart version? | ✅ `list`, `history` (CHART column) |
 | 28 | appVersion? | ✅ `list`, `history` (APP VERSION column) |
 | 29 | Which Helm client version created the release? | ➖ Helm does not store it in the record |

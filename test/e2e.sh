@@ -101,6 +101,8 @@ for f in "$TMP"/manifests/*.yaml; do
   check "manifests --output-dir $(basename "$f") has mode 600" test "$(mode "$f")" = 600
 done
 expect 1 "$BIN" manifests demo -n "$NS" --revision 99
+expect 0 "$BIN" notes demo -n "$NS"
+expect 1 "$BIN" notes demo -n "$NS" --revision 99
 expect_out 0 'No problems found in chart demo' "$BIN" lint "$CHART"
 mkdir -p "$TMP/broken/templates"
 cp "$CHART/Chart.yaml" "$TMP/broken/"
