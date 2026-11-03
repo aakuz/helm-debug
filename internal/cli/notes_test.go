@@ -18,7 +18,7 @@ import (
 const (
 	notesV1     = "Thank you for installing api v1.\n"
 	notesV2     = "Visit http://api.prod\n"
-	unsafeNotes = "\x1b]0;pwned\x07Visit \x1b[31mhttp://x\x1b[0m‮"
+	unsafeNotes = "\x1b]0;pwned\x07Visit \x1b[31mhttp://x\x1b[0m\u202e"
 )
 
 func notesRelease(t *testing.T, c *cluster, version int, notes string) {
