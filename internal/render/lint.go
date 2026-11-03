@@ -1,6 +1,9 @@
 package render
 
 import (
+	"fmt"
+	"maps"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -29,8 +32,9 @@ type Line struct {
 	Failing bool   `json:"failing,omitempty"`
 }
 
-// Lint renders ch and reports every template that fails to render and every rendered document that is not valid
-// YAML. The error is returned only when the chart cannot be rendered at all, for example when the values do not
+// Lint renders ch and reports every template that fails to render, every rendered document that is not valid YAML
+// and every document with an empty apiVersion, kind or metadata.name. As in helm lint, only .yaml and .yml output
+// is checked as manifests, so NOTES.txt and other text templates are skipped. The error is returned only when the chart cannot be rendered at all, for example when the values do not
 // match the chart's schema.
 func Lint(ch *chart.Chart, o Options) ([]Finding, error) {
 	out, failed, err := Render(ch, o)
@@ -41,14 +45,10 @@ func Lint(ch *chart.Chart, o Options) ([]Finding, error) {
 	for _, f := range failed {
 		findings = append(findings, Finding{File: f.File, Error: f.Err.Error()})
 	}
-	files := slices.Sorted(func(yield func(string) bool) {
-		for k := range out {
-			if !yield(k) {
-				return
-			}
+	for _, file := range slices.Sorted(maps.Keys(out)) {
+		if ext := path.Ext(file); ext != ".yaml" && ext != ".yml" {
+			continue
 		}
-	})
-	for _, file := range files {
 		findings = append(findings, lintFile(file, out[file], o.ShowSecrets)...)
 	}
 	return findings, nil
@@ -71,10 +71,12 @@ func lintFile(file, rendered string, showSecrets bool) []Finding {
 		var obj map[string]any
 		if err := yaml.Unmarshal([]byte(text), &obj); err != nil {
 			f := Finding{File: file, Error: err.Error()}
-			if m := yamlLine.FindStringSubmatch(err.Error()); m != nil {
-				n, _ := strconv.Atoi(m[1])
+			if m := yamlLine.FindStringSubmatchIndex(f.Error); m != nil {
+				n, _ := strconv.Atoi(f.Error[m[2]:m[3]])
 				f.Line = d.from + n
 				f.Context = context(shown, f.Line)
+				// The parser counts lines from the start of the document; make the message agree with Line.
+				f.Error = f.Error[:m[0]] + fmt.Sprintf("line %d:", f.Line) + f.Error[m[1]:]
 			}
 			findings = append(findings, f)
 			continue

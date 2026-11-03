@@ -58,7 +58,9 @@ data:
 	if f.File != "app/templates/cm.yaml" || f.Line != 11 {
 		t.Fatalf("file/line = %s:%d, want app/templates/cm.yaml:11", f.File, f.Line)
 	}
-	if f.Error != "error converting YAML to JSON: yaml: line 6: did not find expected key" {
+	// The parser counts from the start of the document; the message is rewritten to count from the start of the
+	// file, like Line and the context.
+	if f.Error != "error converting YAML to JSON: yaml: line 11: did not find expected key" {
 		t.Fatalf("error = %q", f.Error)
 	}
 	want := lines(6, 11, "apiVersion: v1", "kind: ConfigMap", "metadata:", "  name: two", "data:", "  a: b", " bad: indent", "  c: d")
@@ -205,5 +207,21 @@ func TestLintRendersSubchartTemplatesOnTheirOwn(t *testing.T) {
 	}
 	if len(ch.Dependencies()[0].Templates) != 2 || ch.Dependencies()[0].Templates[0].Name != "templates/broken.yaml" {
 		t.Fatal("Lint must not modify the chart it is given")
+	}
+}
+
+func TestLintChecksOnlyYAMLTemplates(t *testing.T) {
+	t.Parallel()
+	ch := testChart("app", nil,
+		"templates/NOTES.txt", "Visit: http://x\nThanks for installing.\n",
+		"templates/raw.txt", "plain text\n",
+		"templates/cm.yml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n bad: y\n",
+	)
+	got, err := Lint(ch, Options{ReleaseName: "rel", Namespace: "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].File != "app/templates/cm.yml" {
+		t.Fatalf("only .yaml/.yml output is a manifest, as for helm lint: %+v", got)
 	}
 }

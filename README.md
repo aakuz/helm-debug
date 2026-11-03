@@ -400,6 +400,9 @@ helm-debug lint mychart-1.2.0.tgz -f prod.yaml --set image.tag=1.2 -n prod -o js
 Renders a chart (directory or `.tgz`) client-side with the Helm SDK, like `helm template`, and reports every
 problem in one run: templates that fail to render, rendered documents that are not valid YAML, and documents
 with an empty `apiVersion`, `kind` or `metadata.name`. Each problem is shown with the rendered lines around it.
+Line numbers count from the start of the rendered file. For an empty field the line shown is the rendered one,
+not the template line that produced it. As in `helm lint`, only `.yaml` and `.yml` output is checked, so
+`NOTES.txt` is skipped.
 
 ```console
 $ helm-debug lint ./demo
@@ -419,7 +422,9 @@ demo/templates/cm.yaml:6: error converting YAML to JSON: yaml: line 6: did not f
 
 The cluster is never contacted: `lookup` returns empty and `.Capabilities` holds Helm's defaults, so templates
 that depend on live objects or the server version may render differently at install time. Secret `data` and
-`stringData` values in the context lines are masked unless `--show-secrets` is set. Values come from local `-f`
+`stringData` values in the context lines are masked unless `--show-secrets` is set; messages of `fail` and
+`required` are printed as the template wrote them. Values that do not match `values.schema.json` are an
+execution error (exit 1), since no template is rendered. Values come from local `-f`
 files and `--set` only; repo and OCI chart references are not supported yet (see #17).
 The release namespace is taken from `--namespace` (default `default`), and `--release-name` defaults to `release-name`.
 Exits with 0 when no problems are found, 2 when problems are found, and 1 when the chart or values cannot be loaded.

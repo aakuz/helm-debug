@@ -27,7 +27,8 @@ type Options struct {
 	ShowSecrets bool
 }
 
-// Load reads a chart directory or archive.
+// Load reads a chart directory or archive. It is the one place chart sources are resolved, so repo and OCI
+// references (#17) can be added here for every command that renders.
 func Load(chartPath string) (*chart.Chart, error) {
 	return loader.Load(chartPath)
 }
@@ -80,7 +81,7 @@ func Render(ch *chart.Chart, o Options) (map[string]string, []TemplateError, err
 	out = map[string]string{}
 	var failed []TemplateError
 	for _, name := range templateNames(ch, ch.Name()) {
-		got, err := engine.Render(only(ch, ch.Name(), name), vals)
+		got, err := engine.Render(withOnlyExecutable(ch, ch.Name(), name), vals)
 		if err != nil {
 			failed = append(failed, TemplateError{File: name, Err: err})
 			continue
@@ -105,9 +106,9 @@ func templateNames(ch *chart.Chart, prefix string) []string {
 	return names
 }
 
-// only returns a copy of ch in which every executable template except keep is renamed to a partial: the engine
+// withOnlyExecutable returns a copy of ch in which every executable template except keep is renamed to a partial: the engine
 // still parses it, so the blocks it defines stay available to keep, but does not execute it.
-func only(ch *chart.Chart, prefix, keep string) *chart.Chart {
+func withOnlyExecutable(ch *chart.Chart, prefix, keep string) *chart.Chart {
 	c := *ch
 	c.Templates = make([]*common.File, len(ch.Templates))
 	for i, f := range ch.Templates {
@@ -119,7 +120,7 @@ func only(ch *chart.Chart, prefix, keep string) *chart.Chart {
 	}
 	var deps []*chart.Chart
 	for _, dep := range ch.Dependencies() {
-		deps = append(deps, only(dep, path.Join(prefix, "charts", dep.Name()), keep))
+		deps = append(deps, withOnlyExecutable(dep, path.Join(prefix, "charts", dep.Name()), keep))
 	}
 	c.SetDependencies(deps...)
 	return &c

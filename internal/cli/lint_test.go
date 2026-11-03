@@ -2,9 +2,9 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -96,14 +96,21 @@ func TestLintJSONUsesValuesReleaseAndNamespace(t *testing.T) {
 func TestLintExecutionErrors(t *testing.T) {
 	t.Parallel()
 	dir := writeChart(t, "", "templates/cm.yaml", lintConfigMap)
-	for name, args := range map[string][]string{
-		"missing chart":       {"lint", filepath.Join(dir, "nope")},
-		"missing values file": {"lint", dir, "-f", filepath.Join(dir, "nope.yaml")},
-		"bad --set":           {"lint", dir, "--set", "a"},
-	} {
-		_, err := run(t, nil, "", args...)
-		if err == nil || strings.Contains(err.Error(), ErrProblems.Error()) {
-			t.Errorf("%s: want an execution error, got %v", name, err)
-		}
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"missing chart", []string{"lint", filepath.Join(dir, "nope")}},
+		{"missing values file", []string{"lint", dir, "-f", filepath.Join(dir, "nope.yaml")}},
+		{"bad --set", []string{"lint", dir, "--set", "a"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := run(t, nil, "", tt.args...)
+			if err == nil || errors.Is(err, ErrProblems) {
+				t.Fatalf("want an execution error, got %v", err)
+			}
+		})
 	}
 }
