@@ -23,7 +23,8 @@ func newNotesCommand(o *Options) *cobra.Command {
 like helm get notes. Nothing is changed. Use -o json or -o yaml to print
 {release, namespace, revision, notes}.
 
-Notes are chart-controlled text, so terminal escape sequences and control characters are stripped.`,
+Notes are chart-controlled text, so terminal escape sequences, control
+characters (except newline and tab) and Unicode format characters are stripped in every output format.`,
 		Example: `  helm-debug notes backend
   helm-debug notes backend --revision 3 -o json`,
 		Args: cobra.ExactArgs(1),

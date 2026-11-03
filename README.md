@@ -397,11 +397,11 @@ stderr, since Secret data is only base64-encoded. Exits with 1 if the release or
 $ helm-debug notes backend -n prod --revision 2
 ```
 
-Prints the NOTES.txt Helm stored for a revision (default latest) as plain text, like `helm get notes`.
-`-o json` and `-o yaml` print `{release, namespace, revision, notes}`. Notes are chart-controlled text, so
-terminal escape sequences, control characters (except newline and tab) and Unicode format characters are
-removed in every output format. Empty notes print nothing and exit 0. Exits with 1 if the release or
-revision does not exist.
+Prints the NOTES.txt Helm stored for a revision (default latest) as plain text, like `helm get notes`
+but without its `NOTES:` header. `-o json` and `-o yaml` print `{release, namespace, revision, notes}`.
+Notes are chart-controlled text, so terminal escape sequences, control characters (except newline and
+tab) and Unicode format characters are removed in every output format. Empty notes print nothing and
+exit 0. Exits with 1 if the release or revision does not exist.
 
 ### lint
 
