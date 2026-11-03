@@ -2,6 +2,9 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .Release.Name }}-config
+  labels:
+    # Argo tracks objects by this label when they carry no tracking-id annotation.
+    app.kubernetes.io/instance: {{ .Release.Name }}
 data:
   key: value
 ---
@@ -20,6 +23,9 @@ spec:
       containers:
         - name: app
           image: {{ .Values.image }}
+          {{- with .Values.command }}
+          command: {{ toJson . }}
+          {{- end }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -30,3 +36,35 @@ metadata:
     helm.sh/hook-delete-policy: before-hook-creation
 data:
   key: value
+{{- if .Values.hookJob }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-job
+  annotations:
+    helm.sh/hook: post-install
+    helm.sh/hook-delete-policy: hook-succeeded
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: job
+          image: busybox:1.36
+          command: ["true"]
+{{- end }}
+{{- if .Values.legacyTestHook }}
+---
+apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-pdb
+  annotations:
+    helm.sh/hook: test
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: {{ .Release.Name }}}
+{{- end }}

@@ -1,1 +1,7 @@
 image: registry.k8s.io/pause:3.10
+# command overrides the container command, e.g. to make the pod crash.
+command: []
+# hookJob adds a post-install Job hook that Helm deletes once it succeeds.
+hookJob: false
+# legacyTestHook adds a test hook with a removed apiVersion; it is stored but never applied.
+legacyTestHook: false

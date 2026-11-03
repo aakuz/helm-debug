@@ -190,3 +190,26 @@ func TestAuditUndecodableLatestRecord(t *testing.T) {
 		t.Fatalf("res = %+v", res)
 	}
 }
+
+func TestFormatSize(t *testing.T) {
+	tests := []struct {
+		n    int
+		want string
+	}{
+		{0, "0B"},
+		{1023, "1023B"},
+		{1024, "1.0KiB"},
+		{1536, "1.5KiB"},
+		{1<<20 - 1, "1024.0KiB"},
+		{1 << 20, "1.0MiB"},
+		{3 << 19, "1.5MiB"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			t.Parallel()
+			if got := formatSize(tt.n); got != tt.want {
+				t.Fatalf("formatSize(%d) = %q, want %q", tt.n, got, tt.want)
+			}
+		})
+	}
+}
