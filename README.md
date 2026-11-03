@@ -23,6 +23,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`values`** – user-supplied or computed values of a release revision, as a values file.
 - **`flux status`** – a Flux HelmRelease's conditions next to the history of the Helm release it manages.
 - **`manifests`** – the stored rendered manifest of a release revision, optionally with hooks or split into one file per object.
+- **`lint`** – render a local chart and show the rendered YAML around every template error and invalid document.
 - **`deprecated`** – apiVersions in a release revision that are removed or deprecated at a target Kubernetes version.
 - **`argo resources`** – resources an ArgoCD Application tracks, with sync, health, live state and Argo tracking metadata.
 
@@ -130,7 +131,7 @@ All commands accept the usual kubectl flags (`--context`, `--kubeconfig`, `-n`, 
 | `--storage secret\|configmap` | Helm storage driver (default `$HELM_DRIVER`, else `secret`) |
 | `--concurrency N` | Parallel API requests (default 8) |
 | `-v, --verbose` | Debug logging to stderr (also `HELM_DEBUG=true`) |
-| `--show-secrets` | Show Secret `data` values in `drift` and `diff` instead of masking them (default off) |
+| `--show-secrets` | Show Secret `data` values in `drift`, `diff` and `lint` instead of masking them (default off) |
 
 When run as `helm debug`, Helm passes its global flags (`-n`, `--kube-context`, `--kubeconfig`,
 `--kube-token`, …) through `HELM_*` environment variables. `helm-debug` picks them up as defaults
@@ -389,6 +390,45 @@ documents without kind or name become `document-N.yaml`), with mode 0600, and pr
 paths. `-o` does not apply: output is always YAML. When a Secret is included, a warning is printed to
 stderr, since Secret data is only base64-encoded. Exits with 1 if the release or revision does not exist.
 
+### lint
+
+```bash
+helm-debug lint ./mychart
+helm-debug lint mychart-1.2.0.tgz -f prod.yaml --set image.tag=1.2 -n prod -o json
+```
+
+Renders a chart (directory or `.tgz`) client-side with the Helm SDK, like `helm template`, and reports every
+problem in one run: templates that fail to render, rendered documents that are not valid YAML, and documents
+with an empty `apiVersion`, `kind` or `metadata.name`. Each problem is shown with the rendered lines around it.
+Line numbers count from the start of the rendered file. For an empty field the line shown is the rendered one,
+not the template line that produced it. As in `helm lint`, only `.yaml` and `.yml` output is checked, so
+`NOTES.txt` is skipped.
+
+```console
+$ helm-debug lint ./demo
+demo/templates/req.yaml: execution error at (demo/templates/req.yaml:1:3): image.tag is required
+
+demo/templates/cm.yaml:6: error converting YAML to JSON: yaml: line 6: did not find expected key
+  1 | apiVersion: v1
+  2 | kind: ConfigMap
+  3 | metadata:
+  4 |   name: release-name-default
+  5 | data:
+> 6 |   a: b
+  7 |  bad: b
+
+2 problem(s) found in chart demo
+```
+
+The cluster is never contacted: `lookup` returns empty and `.Capabilities` holds Helm's defaults, so templates
+that depend on live objects or the server version may render differently at install time. Secret `data` and
+`stringData` values in the context lines are masked unless `--show-secrets` is set; messages of `fail` and
+`required` are printed as the template wrote them. Values that do not match `values.schema.json` are an
+execution error (exit 1), since no template is rendered. Values come from local `-f`
+files and `--set` only; repo and OCI chart references are not supported yet (see #17).
+The release namespace is taken from `--namespace` (default `default`), and `--release-name` defaults to `release-name`.
+Exits with 0 when no problems are found, 2 when problems are found, and 1 when the chart or values cannot be loaded.
+
 ### deprecated
 
 ```console
@@ -634,7 +674,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 |---|---|
 | 0 | No problems (`diff` always exits 0 when it succeeds) |
 | 1 | Execution error (no access, release not found, bad flags, …) |
-| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), problem release status, workload not rolled out or problem pods, or `--wait` timed out (`health`), HelmRelease not Ready or its latest revision failed/pending or no records (`flux status`), Application not Synced/Healthy or a tracked object out of sync, degraded, absent or not tracked (`argo resources`), releases that need cleanup (`audit`) |
+| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), problem release status, workload not rolled out or problem pods, or `--wait` timed out (`health`), HelmRelease not Ready or its latest revision failed/pending or no records (`flux status`), Application not Synced/Healthy or a tracked object out of sync, degraded, absent or not tracked (`argo resources`), releases that need cleanup (`audit`), problems found in a chart (`lint`) |
 
 ## RBAC
 
@@ -646,6 +686,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 | `history` | `list` on secrets (or configmaps) in the release namespace |
 | `values` | `list` on secrets (or configmaps) in the release namespace |
 | `manifests` | `list` on secrets (or configmaps) in the release namespace |
+| `lint` | Nothing: the chart is rendered locally and the cluster is not contacted |
 | `list` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
 | `find` | `get` on the object; `list` + `get` on secrets (or configmaps) cluster-wide for the scan |
 | `stuck` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
