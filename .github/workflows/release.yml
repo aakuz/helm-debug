@@ -30,6 +30,3 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: rajatjindal/krew-release-bot@v0.0.51
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
