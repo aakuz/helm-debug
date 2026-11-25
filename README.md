@@ -533,8 +533,9 @@ LAST SEEN  OBJECT               REASON        COUNT  MESSAGE
 10m        Pod/web-aaa          BackOff       12     Back-off restarting failed container
 ```
 
-Checks the objects declared by a release revision that `helm --wait` waits for, with Helm's readiness
-rules: Deployments, StatefulSets, DaemonSets, Pods, PersistentVolumeClaims and Services of type
+Checks the objects declared by a release revision that `helm --wait` waits for, with the readiness
+rules of Helm's `ReadyChecker` (`--wait=legacy` in Helm 4; the default `--wait=watcher` uses kstatus),
+in Helm's install order: Deployments, StatefulSets, DaemonSets, Pods, PersistentVolumeClaims and Services of type
 `LoadBalancer`. Jobs are checked only with `--wait-for-jobs`, the same flag as Helm's. Hooks and other kinds
 are ignored. For a Deployment, the rollout is incomplete when the controller has not observed the
 current generation, replicas are not yet updated or available, old replicas are still pending

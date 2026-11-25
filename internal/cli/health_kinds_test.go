@@ -345,7 +345,7 @@ func TestHealthWaitKindsAbsent(t *testing.T) {
 	out, err := run(t, c, "prod", "health", "app", "-o", "json")
 	wantProblems(t, err, true)
 	res := decodeKinds(t, out)
-	want := []string{"DaemonSet/agent", "PersistentVolumeClaim/data", "Pod/debug", "Service/lb"}
+	want := []string{"PersistentVolumeClaim/data", "Service/lb", "DaemonSet/agent", "Pod/debug"} // Helm's install order
 	var got []string
 	for _, w := range res.Workloads {
 		if w.Status != "absent" {

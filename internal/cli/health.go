@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"helm.sh/helm/v4/pkg/release/common"
+	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -139,6 +141,7 @@ func (r *healthResult) problems() bool {
 // The kinds and readiness rules below mirror the ReadyChecker of helm --wait:
 // https://github.com/helm/helm/blob/v4.3.1/pkg/kube/ready.go
 // Keep them in step with it, so that "healthy" here means "helm --wait would stop waiting".
+// Helm 4 uses it with --wait=legacy; the default --wait=watcher judges readiness with kstatus instead.
 type kindKey struct{ apiVersion, kind string }
 
 var workloadGVR = map[kindKey]schema.GroupVersionResource{
@@ -369,6 +372,10 @@ func runHealth(cmd *cobra.Command, o *Options, c *Clients, name string, opts hea
 		}
 		res.Workloads = append(res.Workloads, workloadHealth{Kind: obj.Kind, Namespace: obj.Namespace, Name: obj.Name, gvr: workloadGVR[kindKey{obj.APIVersion, obj.Kind}]})
 	}
+	// Helm waits for the objects in install order, so the table and WAITING FOR follow it too.
+	sort.SliceStable(res.Workloads, func(i, j int) bool {
+		return installRank(res.Workloads[i].Kind) < installRank(res.Workloads[j].Kind)
+	})
 	pods := make([][]corev1.Pod, len(res.Workloads))
 	parallel(len(res.Workloads), o.Concurrency, func(i int) {
 		w := &res.Workloads[i]
@@ -544,7 +551,7 @@ func statefulSetState(s *appsv1.StatefulSet) (desired, ready int32, msg string) 
 	return desired, ready, msg
 }
 
-// daemonSetState is deploymentState for DaemonSets.
+// daemonSetState is deploymentState for DaemonSets, with Helm's rules rather than kubectl's.
 func daemonSetState(d *appsv1.DaemonSet) (desired, ready int32, msg string) {
 	st := d.Status
 	desired, ready = st.DesiredNumberScheduled, st.NumberReady
@@ -589,6 +596,7 @@ func jobState(j *batchv1.Job) (desired, ready int32, msg string) {
 	return desired, ready, msg
 }
 
+// pvcState names the phase, because Pending (no provisioner, missing StorageClass) and Lost need different fixes.
 func pvcState(p *corev1.PersistentVolumeClaim) string {
 	switch p.Status.Phase {
 	case corev1.ClaimBound:
@@ -763,4 +771,9 @@ func printHealthState(o *Options, w io.Writer, res *healthResult) {
 		}
 		et.flush()
 	}
+}
+
+// installRank is the position of a kind in Helm's install order.
+func installRank(kind string) int {
+	return slices.Index(releaseutil.InstallOrder, kind)
 }
