@@ -75,10 +75,13 @@ helm install crash "$CHART" -n "$NS" --set image=busybox:1.36 --set-json 'comman
 
 expect 0 "$BIN" resources demo -n "$NS"
 expect 0 "$BIN" history demo -n "$NS"
+expect 0 "$BIN" history -n "$NS"
+expect 0 "$BIN" history -n "$NS" --since 1h --status failed --status deployed -o json
 expect 0 "$BIN" find configmap/demo-config -n "$NS"
 expect 0 "$BIN" find cm demo-hook -A
 expect 2 "$BIN" find configmap/nope -n "$NS"
 expect 1 "$BIN" history nope -n "$NS"
+expect 1 "$BIN" history demo -A
 
 # Kubectl plugin and helm-style env defaults.
 expect 0 env PATH="$ROOT/bin:$PATH" kubectl helm-debug history demo -n "$NS"
@@ -148,6 +151,8 @@ expect 2 "$BIN" resources other -n "$NS"
 # Failed upgrade: the image never becomes ready.
 helm upgrade demo "$CHART" -n "$NS" --set image=registry.invalid/nope:1 --wait --timeout 5s
 expect 2 "$BIN" history demo -n "$NS"
+expect 2 "$BIN" history -n "$NS"
+expect 2 "$BIN" history -n "$NS" --since 1h --status failed --status deployed -o json
 expect_out 0 'registry.invalid/nope:1' "$BIN" diff demo 1 2 -n "$NS"
 expect 1 "$BIN" diff demo 1 99 -n "$NS"
 expect 2 "$BIN" audit -n "$NS" --max-revisions 1

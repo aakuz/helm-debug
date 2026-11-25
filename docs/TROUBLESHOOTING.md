@@ -478,5 +478,6 @@ The permissions helm-debug itself needs are listed in [README → RBAC](../READM
 | 616 | Chart stopped uninstalling after a Kubernetes upgrade? | 🟡 `deprecated REL`; finalizers: #49 |
 | 617 | Install hangs only with `--wait`? | 🟡 the blocker is readiness, not the API: `health`, all kinds: #46 |
 | 618 | `--atomic` removes the failed release: how to keep evidence? | 🔧 #55 |
-| 619 | Post-mortem without CI logs? | ✅ `history` (reasons), `diff`, `drift`; a timeline of all releases: #44 |
+| 619 | Post-mortem without CI logs? | ✅ `history` (reasons), `diff`, `drift`; a timeline of all releases, newest first: `history -A --since 24h` |
 | 620 | What to save automatically on a failed deployment? | 🔧 #55 |
+| 621 | What changed during an incident, which rollout introduced a bug, which releases failed across the cluster? | ✅ `history -A --since 2h` (timeline, newest first), `history -A --status failed` |
