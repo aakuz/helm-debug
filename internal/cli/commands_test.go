@@ -334,7 +334,7 @@ func TestHistoryArgumentCount(t *testing.T) {
 	for _, tc := range []struct {
 		args []string
 		want string
-	}{{[]string{"history"}, "accepts 1 arg(s), received 0"}, {[]string{"history", "a", "b"}, "accepts 1 arg(s), received 2"}} {
+	}{{[]string{"history", "a", "b"}, "accepts at most 1 arg(s), received 2"}} {
 		_, err := run(t, c, "prod", tc.args...)
 		wantExecError(t, err, tc.want)
 	}

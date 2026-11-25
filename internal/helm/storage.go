@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	rspb "helm.sh/helm/v4/pkg/release/v1"
 	"helm.sh/helm/v4/pkg/storage/driver"
@@ -106,6 +107,8 @@ type Ref struct {
 	Object    string
 	Release   string
 	Version   int
+	Status    string    // "status" label of the record; empty when absent
+	Written   time.Time // last write of the record: the modifiedAt label, else createdAt; zero when neither is set
 }
 
 // ListRefs lists release records page by page, reading only object metadata.
@@ -228,5 +231,13 @@ func (s *Store) RecordSizes(ctx context.Context, namespace string) ([]RecordSize
 }
 
 func refOf(m metav1.ObjectMeta) Ref {
-	return Ref{Namespace: m.Namespace, Object: m.Name, Release: m.Labels["name"], Version: recordVersion(m.Name, m.Labels["version"])}
+	r := Ref{Namespace: m.Namespace, Object: m.Name, Release: m.Labels["name"], Version: recordVersion(m.Name, m.Labels["version"]), Status: m.Labels["status"]}
+	// Helm's storage driver Update rewrites the labels and drops createdAt,
+	// so records that went through an install/upgrade/rollback only carry modifiedAt.
+	if n, err := strconv.ParseInt(m.Labels["modifiedAt"], 10, 64); err == nil {
+		r.Written = time.Unix(n, 0)
+	} else if n, err := strconv.ParseInt(m.Labels["createdAt"], 10, 64); err == nil {
+		r.Written = time.Unix(n, 0)
+	}
+	return r
 }

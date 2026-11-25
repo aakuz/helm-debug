@@ -13,7 +13,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`drift`** – which declared fields differ between the latest stored manifest and live objects.
 - **`diff`** – rendered manifest and user-values differences between two revisions.
 - **`find`** – which release(s) declare a given object.
-- **`history`** – revisions with status, chart/app version and the stored failure reason.
+- **`history`** – revisions with status, chart/app version and the stored failure reason; without a release name, a newest-first timeline of all releases in a namespace or the cluster.
 - **`stuck`** – releases stuck in `pending-install/upgrade/rollback` and the command that unlocks them.
 - **`health`** – readiness of the release's Deployments and StatefulSets, crashing pods and recent warning events.
 - **`lost-found`** – objects that claim a Helm release which no longer exists in the cluster.
@@ -277,6 +277,20 @@ REVISION  UPDATED              STATUS      CHART          APP VERSION  DESCRIPTI
 
 Revisions are listed in Helm's order: oldest first, the latest at the bottom. `--max N` keeps the N latest.
 `find --all-revisions` uses the same order.
+
+Without a release name, `history` prints the revisions of all releases in the namespace (`-n`) or in all
+namespaces (`-A`) as one timeline, newest first, so what changed last is at the top. `--since DURATION` keeps
+revisions updated within the period, `--status` (repeatable) keeps the given statuses, and `--max N` keeps the N
+newest after the other filters. `-A`, `--since` and `--status` cannot be combined with a release name. For example,
+`helm-debug history -A --since 2h --status failed` lists the failed revisions of the last two hours across the cluster.
+
+```console
+$ helm-debug history -A
+NAMESPACE  RELEASE  REVISION  UPDATED              STATUS      CHART      APP VERSION  DESCRIPTION
+prod       web      2         2026-10-18 11:00:00  failed      web-1.2.0  2.0          Upgrade "web" failed: timed out waiting for the condition
+dev        api      1         2026-10-18 10:00:00  deployed    api-1.1.0  2.0          -
+prod       web      1         2026-10-18 09:00:00  superseded  web-1.1.0  2.0          -
+```
 
 ### stuck
 
@@ -678,7 +692,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 |---|---|
 | 0 | No problems (`diff` always exits 0 when it succeeds) |
 | 1 | Execution error (no access, release not found, bad flags, …) |
-| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`), stuck releases (`stuck`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), problem release status, workload not rolled out or problem pods, or `--wait` timed out (`health`), HelmRelease not Ready or its latest revision failed/pending or no records (`flux status`), Application not Synced/Healthy or a tracked object out of sync, degraded, absent or not tracked (`argo resources`), releases that need cleanup (`audit`), problems found in a chart (`lint`) |
+| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`, also any release in its timeline), stuck releases (`stuck`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), problem release status, workload not rolled out or problem pods, or `--wait` timed out (`health`), HelmRelease not Ready or its latest revision failed/pending or no records (`flux status`), Application not Synced/Healthy or a tracked object out of sync, degraded, absent or not tracked (`argo resources`), releases that need cleanup (`audit`), problems found in a chart (`lint`) |
 
 ## RBAC
 
@@ -687,7 +701,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 | `resources` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on every declared object |
 | `drift` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on every declared object |
 | `diff` | `list` on secrets (or configmaps) in the release namespace |
-| `history` | `list` on secrets (or configmaps) in the release namespace |
+| `history` | `list` on secrets (or configmaps) in the release namespace; the timeline (no release name) needs `list` + `get` there, or cluster-wide with `-A` |
 | `values` | `list` on secrets (or configmaps) in the release namespace |
 | `manifests` | `list` on secrets (or configmaps) in the release namespace |
 | `notes` | `list` on secrets (or configmaps) in the release namespace |
