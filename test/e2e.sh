@@ -106,6 +106,13 @@ done
 expect 1 "$BIN" manifests demo -n "$NS" --revision 99
 expect 0 "$BIN" notes demo -n "$NS"
 expect 1 "$BIN" notes demo -n "$NS" --revision 99
+expect_out 0 'No records Helm cannot see' "$BIN" storage demo -n "$NS"
+expect 1 "$BIN" storage nope -n "$NS"
+# A leftover record under the next key without Helm's labels is what makes `helm upgrade` fail with "release: already exists".
+next=$("$BIN" storage demo -n "$NS" -o json | sed -n 's/.*"nextObject": "\(.*\)".*/\1/p')
+kubectl create secret generic "$next" -n "$NS" --from-literal=release=garbage >/dev/null
+expect_out 2 'which already exists' "$BIN" storage demo -n "$NS"
+kubectl delete secret "$next" -n "$NS" >/dev/null
 expect_out 0 'No problems found in chart demo' "$BIN" lint "$CHART"
 mkdir -p "$TMP/broken/templates"
 cp "$CHART/Chart.yaml" "$TMP/broken/"

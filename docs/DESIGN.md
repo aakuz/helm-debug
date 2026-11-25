@@ -36,6 +36,13 @@ static REST mapper.
 
   Records that fail to decode are counted and reported. They don't abort the scan.
 
+`storage` takes a third path, for records whose labels Helm cannot match. It lists the metadata of every
+Secret (or ConfigMap) in the release namespace with no label selector, and keeps objects named
+`sh.helm.release.v1.NAME.vN` plus objects labelled `name=NAME,owner=helm` under any key, which Helm counts
+too. This runs for both drivers. Each kept object is fetched twice: a typed GET for labels, creation time
+and size, and the driver's `Get` to decode it, because the SDK decoder is unexported and ADR 0002 rules out
+our own. That is acceptable because it covers one release.
+
 ## Objects of a release
 
 The manifest is split with `releaseutil.SplitManifests`, and hooks come from `release.Hooks`. Each

@@ -48,7 +48,7 @@ check `stuck` (it suggests a rollback to the last good revision) and back up the
 |---|---|---|
 | 1 | Does the release exist at all? | ✅ `list -A --all` or `history REL`; exit code 1 means no records |
 | 2 | How to find a release when the namespace is unknown? | ✅ `list -A --all`; `find KIND/NAME -A` from one of its objects |
-| 3 | Why can `helm list` miss a release whose Secret exists? | 🟡 `list --all` shows pending/uninstalled ones; records in another namespace or driver: #24, #45 |
+| 3 | Why can `helm list` miss a release whose Secret exists? | 🟡 `list --all` shows pending/uninstalled ones; records in another namespace or driver: #24, `storage REL` |
 | 4 | `helm list` vs `helm status` vs `helm history`? | ✅ `list` = latest revision per release, `history` = every revision with failure reason, `health` = live state |
 | 5 | Which release states exist? | ➖ deployed, failed, pending-install/upgrade/rollback, superseded, uninstalling, uninstalled, unknown; all shown by `history` |
 | 6–14 | What do `deployed`, `failed`, `pending-*`, `uninstalling`, `superseded`, `uninstalled`, `unknown` mean? | ➖ Helm concept; `history` shows them, `stuck` flags pending ones, `health` exits 2 on problem states |
@@ -134,9 +134,9 @@ check `stuck` (it suggests a rollback to the last good revision) and back up the
 | 124 | Why does retrying `helm upgrade` not help? | ➖ the pending record blocks it until rolled back or removed |
 | 125–126 | When is a rollback safe; which revision? | ✅ `stuck` suggests the last deployed/superseded revision; `diff` shows what it reverts |
 | 127 | Rollback also ends in `pending-rollback`? | ✅ `stuck` reports `pending-rollback` too |
-| 128–133 | When may the latest release Secret be deleted; consequences; restoring history? | 🟡 `history` shows what remains; back up the records first: #55; records Helm does not see: #45 |
+| 128–133 | When may the latest release Secret be deleted; consequences; restoring history? | 🟡 `history` shows what remains; back up the records first: #55; records Helm does not see: `storage REL` |
 | 134–135 | What is inside a release Secret; can it be decoded? | ✅ decoded by `history`, `values --all`, `manifests --hooks`; raw backup: #55 |
-| 136 | Current revision corrupted, previous one fine? | 🟡 `history` reports undecodable records as errors; storage checks: #45 |
+| 136 | Current revision corrupted, previous one fine? | ✅ `history` reports undecodable records as errors; storage checks: `storage REL` |
 
 ## 6. Rollback
 
@@ -364,7 +364,7 @@ The permissions helm-debug itself needs are listed in [README → RBAC](../READM
 | 483–484 | Deleting old revision Secrets; restoring history? | 🟡 `history` shows what remains; backup: #55 |
 | 485 | Backup before an emergency change? | 🔧 #55 |
 | 486 | Storage other than Secrets? | ✅ `--storage configmap` (SQL driver is not supported) |
-| 487 | How does corrupted metadata show up? | 🟡 decode errors in `history`/`list`; label/key mismatches: #45 |
+| 487 | How does corrupted metadata show up? | ✅ decode errors in `history`/`list`; label/key mismatches: `storage REL` |
 
 ## 28. `has no deployed releases`
 
