@@ -560,13 +560,13 @@ $ helm-debug health app -n prod --wait-for-jobs
 Release prod/app revision 1 (deployed)
 
 KIND                   NAMESPACE  NAME     READY  STATUS     DETAILS
-DaemonSet              prod       agent    1/3    unhealthy  1 of 3 ready
-Job                    prod       migrate  0/1    unhealthy  failed: 3 failures exceed backoffLimit 2
 PersistentVolumeClaim  prod       data     -      unhealthy  phase Pending
-Pod                    prod       debug    0/1    unhealthy  not ready
 Service                prod       lb       -      unhealthy  no load balancer address yet
+DaemonSet              prod       agent    1/3    unhealthy  1 of 3 ready
+Pod                    prod       debug    0/1    unhealthy  not ready
+Job                    prod       migrate  0/1    unhealthy  failed: 3 failures exceed backoffLimit 2
 
-WAITING FOR: DaemonSet/agent, Job/migrate, PersistentVolumeClaim/data, Pod/debug, Service/lb
+WAITING FOR: PersistentVolumeClaim/data, Service/lb, DaemonSet/agent, Pod/debug, Job/migrate
 
 Warning events (last hour):
 LAST SEEN  OBJECT                      REASON                  COUNT  MESSAGE
