@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	rspb "helm.sh/helm/v4/pkg/release/v1"
 	"helm.sh/helm/v4/pkg/storage/driver"
@@ -360,5 +361,83 @@ func TestRecordSizesError(t *testing.T) {
 	})
 	if _, err := (&Store{Kube: kc, Driver: StorageSecret}).RecordSizes(context.Background(), ""); err == nil {
 		t.Error("expected list error")
+	}
+}
+
+func TestRefOfLabels(t *testing.T) {
+	created := time.Unix(1760788800, 0)
+	for _, tc := range []struct {
+		name        string
+		labels      map[string]string
+		wantStatus  string
+		wantCreated time.Time
+	}{
+		{"both labels", map[string]string{"name": "app", "version": "3", "status": "failed", "createdAt": "1760788800"}, "failed", created},
+		{"no labels", map[string]string{"name": "app", "version": "3"}, "", time.Time{}},
+		{"unparsable createdAt", map[string]string{"name": "app", "version": "3", "status": "deployed", "createdAt": "abc"}, "deployed", time.Time{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := refOf(metav1.ObjectMeta{Namespace: "prod", Name: "sh.helm.release.v1.app.v3", Labels: tc.labels})
+			if r.Namespace != "prod" || r.Release != "app" || r.Version != 3 {
+				t.Errorf("identity fields wrong: %+v", r)
+			}
+			if r.Status != tc.wantStatus {
+				t.Errorf("Status = %q, want %q", r.Status, tc.wantStatus)
+			}
+			if !r.Created.Equal(tc.wantCreated) || r.Created.IsZero() != tc.wantCreated.IsZero() {
+				t.Errorf("Created = %v, want %v", r.Created, tc.wantCreated)
+			}
+		})
+	}
+}
+
+func TestListRefsCarriesStatusAndCreated(t *testing.T) {
+	for _, drv := range drivers {
+		t.Run(drv, func(t *testing.T) {
+			objs := []runtime.Object{
+				partial(drv, "prod", "sh.helm.release.v1.app.v1", map[string]string{"owner": "helm", "name": "app", "version": "1", "status": "superseded", "createdAt": "1760788800"}),
+				partial(drv, "prod", "sh.helm.release.v1.app.v2", map[string]string{"owner": "helm", "name": "app", "version": "2"}),
+				partial(drv, "prod", "sh.helm.release.v1.app.v3", map[string]string{"owner": "helm", "name": "app", "version": "3", "status": "failed", "createdAt": "abc"}),
+			}
+			s := &Store{Metadata: metafake.NewSimpleMetadataClient(metaScheme(), objs...), Driver: drv}
+			refs, err := s.ListRefs(context.Background(), "prod")
+			if err != nil {
+				t.Fatal(err)
+			}
+			byVer := map[int]Ref{}
+			for _, r := range refs {
+				byVer[r.Version] = r
+			}
+			if r := byVer[1]; r.Status != "superseded" || !r.Created.Equal(time.Unix(1760788800, 0)) {
+				t.Errorf("v1 = %+v, want status superseded, created 1760788800", r)
+			}
+			if r := byVer[2]; r.Status != "" || !r.Created.IsZero() {
+				t.Errorf("v2 = %+v, want empty status and zero created", r)
+			}
+			if r := byVer[3]; r.Status != "failed" || !r.Created.IsZero() {
+				t.Errorf("v3 = %+v, want status failed and zero created", r)
+			}
+		})
+	}
+}
+
+func TestRecordSizesCarryStatusAndCreated(t *testing.T) {
+	for _, drv := range drivers {
+		t.Run(drv, func(t *testing.T) {
+			before := time.Now().Add(-time.Second)
+			s := seed(t, drv, testRelease("app", "prod", 1))
+			after := time.Now().Add(time.Second)
+			sizes, err := s.RecordSizes(context.Background(), "prod")
+			if err != nil || len(sizes) != 1 {
+				t.Fatalf("RecordSizes = %+v, %v", sizes, err)
+			}
+			r := sizes[0]
+			if r.Status != "deployed" {
+				t.Errorf("Status = %q, want deployed (the label Helm writes)", r.Status)
+			}
+			if r.Created.Before(before) || r.Created.After(after) {
+				t.Errorf("Created = %v, want the createdAt label set by the driver (between %v and %v)", r.Created, before, after)
+			}
+		})
 	}
 }
