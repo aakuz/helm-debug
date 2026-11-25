@@ -44,6 +44,26 @@ func (c *cluster) releaseAt(name, ns string, version int, status common.Status, 
 	})
 }
 
+// releaseModifiedAt stores a revision like releaseAt, but labelled the way Helm's driver leaves a record after an
+// Update (every install, upgrade and rollback ends with one): a modifiedAt label set to modified and no createdAt.
+func (c *cluster) releaseModifiedAt(name, ns string, version int, status common.Status, updated, modified time.Time) {
+	c.t.Helper()
+	c.releaseAt(name, ns, version, status, updated, time.Time{})
+	c.relabel(ns, fmt.Sprintf("sh.helm.release.v1.%s.v%d", name, version), func(l map[string]string) {
+		l["modifiedAt"] = strconv.FormatInt(modified.Unix(), 10)
+	})
+}
+
+// writeLabels are the two ways a record carries the time of its last write: createdAt as written by Helm's Create,
+// and modifiedAt (without createdAt) as left by Helm's Update.
+var writeLabels = []struct {
+	name  string
+	store func(c *cluster, name, ns string, version int, status common.Status, updated, written time.Time)
+}{
+	{"createdAt", (*cluster).releaseAt},
+	{"modifiedAt", (*cluster).releaseModifiedAt},
+}
+
 // relabel edits the labels of a stored release record.
 func (c *cluster) relabel(ns, object string, edit func(map[string]string)) {
 	c.t.Helper()
@@ -361,37 +381,41 @@ func TestHistoryTimelineHelpExplainsOrder(t *testing.T) {
 
 // ---- decode only what is needed ----
 
-// manyRevisions stores web v1..n in prod; revision v has status st(v) and was created and updated at(v).
-func manyRevisions(c *cluster, n int, st func(v int) common.Status, at func(v int) time.Time) {
+// manyRevisions stores web v1..n in prod with store; revision v has status st(v) and was written and updated at(v).
+func manyRevisions(c *cluster, store func(c *cluster, name, ns string, version int, status common.Status, updated, written time.Time), n int, st func(v int) common.Status, at func(v int) time.Time) {
 	for v := 1; v <= n; v++ {
-		c.releaseAt("web", "prod", v, st(v), at(v), at(v))
+		store(c, "web", "prod", v, st(v), at(v), at(v))
 	}
 }
 
 func TestHistoryTimelineSinceSkipsOldRecords(t *testing.T) {
-	c := newCluster(t)
-	manyRevisions(c, 22, func(v int) common.Status {
-		if v == 22 {
-			return common.StatusDeployed
-		}
-		return common.StatusSuperseded
-	}, func(v int) time.Time {
-		switch v {
-		case 21:
-			return now.Add(-40 * time.Minute)
-		case 22:
-			return now.Add(-20 * time.Minute)
-		}
-		return now.Add(-30*24*time.Hour + time.Duration(v)*time.Minute)
-	})
-	c.kube.ClearActions()
-	res, err := timeline(t, c, "--since", "1h")
-	wantProblems(t, err, false)
-	if got := revs(res); got != "prod/web/22,prod/web/21" {
-		t.Fatalf("got %s", got)
-	}
-	if n := secretGets(c); n != 2 {
-		t.Errorf("--since 1h loaded %d records, want 2 (records created before the cutoff must not be loaded)", n)
+	for _, wl := range writeLabels {
+		t.Run(wl.name, func(t *testing.T) {
+			c := newCluster(t)
+			manyRevisions(c, wl.store, 22, func(v int) common.Status {
+				if v == 22 {
+					return common.StatusDeployed
+				}
+				return common.StatusSuperseded
+			}, func(v int) time.Time {
+				switch v {
+				case 21:
+					return now.Add(-40 * time.Minute)
+				case 22:
+					return now.Add(-20 * time.Minute)
+				}
+				return now.Add(-30*24*time.Hour + time.Duration(v)*time.Minute)
+			})
+			c.kube.ClearActions()
+			res, err := timeline(t, c, "--since", "1h")
+			wantProblems(t, err, false)
+			if got := revs(res); got != "prod/web/22,prod/web/21" {
+				t.Fatalf("got %s", got)
+			}
+			if n := secretGets(c); n != 2 {
+				t.Errorf("--since 1h loaded %d records, want 2 (records written before the cutoff must not be loaded)", n)
+			}
+		})
 	}
 }
 
@@ -406,7 +430,7 @@ func TestHistoryTimelineStatusSkipsOtherRecords(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newCluster(t)
-			manyRevisions(c, 22, func(v int) common.Status {
+			manyRevisions(c, (*cluster).releaseAt, 22, func(v int) common.Status {
 				switch v {
 				case 5, 12:
 					return common.StatusFailed
@@ -430,21 +454,25 @@ func TestHistoryTimelineStatusSkipsOtherRecords(t *testing.T) {
 }
 
 func TestHistoryTimelineMaxStopsLoading(t *testing.T) {
-	c := newCluster(t)
-	manyRevisions(c, 30, func(v int) common.Status {
-		if v == 30 {
-			return common.StatusDeployed
-		}
-		return common.StatusSuperseded
-	}, func(v int) time.Time { return now.Add(-time.Duration(31-v) * time.Hour) })
-	c.kube.ClearActions()
-	res, err := timeline(t, c, "--max", "1", "--concurrency", "1")
-	wantProblems(t, err, false)
-	if got := revs(res); got != "prod/web/30" {
-		t.Fatalf("got %s", got)
-	}
-	if n := secretGets(c); n > 2 {
-		t.Errorf("--max 1 loaded %d of 30 records, want at most 2 (newest created first, stop once older ones cannot qualify)", n)
+	for _, wl := range writeLabels {
+		t.Run(wl.name, func(t *testing.T) {
+			c := newCluster(t)
+			manyRevisions(c, wl.store, 30, func(v int) common.Status {
+				if v == 30 {
+					return common.StatusDeployed
+				}
+				return common.StatusSuperseded
+			}, func(v int) time.Time { return now.Add(-time.Duration(31-v) * time.Hour) })
+			c.kube.ClearActions()
+			res, err := timeline(t, c, "--max", "1", "--concurrency", "1")
+			wantProblems(t, err, false)
+			if got := revs(res); got != "prod/web/30" {
+				t.Fatalf("got %s", got)
+			}
+			if n := secretGets(c); n > 2 {
+				t.Errorf("--max 1 loaded %d of 30 records, want at most 2 (newest written first, stop once older ones cannot qualify)", n)
+			}
+		})
 	}
 }
 
@@ -456,17 +484,17 @@ func TestHistoryTimelineRecordsWithoutLabels(t *testing.T) {
 			c.releaseAt("web", "prod", v, common.StatusDeployed, u, u)
 		}
 	}
-	t.Run("max loads records without createdAt first", func(t *testing.T) {
+	t.Run("max loads records without write time labels first", func(t *testing.T) {
 		c := newCluster(t)
 		newer(c)
 		c.releaseAt("legacy", "prod", 1, common.StatusDeployed, now.Add(-time.Minute), time.Time{})
 		res, err := timeline(t, c, "--max", "1")
 		wantProblems(t, err, false)
 		if got := revs(res); got != "prod/legacy/1" {
-			t.Errorf("got %s, want the newest revision even though it has no createdAt label", got)
+			t.Errorf("got %s, want the newest revision even though it has no createdAt or modifiedAt label", got)
 		}
 	})
-	t.Run("since keeps a recent record without createdAt", func(t *testing.T) {
+	t.Run("since keeps a recent record without write time labels", func(t *testing.T) {
 		c := newCluster(t)
 		c.releaseAt("web", "prod", 1, common.StatusDeployed, now.Add(-48*time.Hour), now.Add(-48*time.Hour))
 		c.releaseAt("legacy", "prod", 1, common.StatusDeployed, now.Add(-10*time.Minute), time.Time{})
@@ -489,17 +517,22 @@ func TestHistoryTimelineRecordsWithoutLabels(t *testing.T) {
 	})
 }
 
-// createdAt is truncated to seconds and set after LastDeployed, so a record created in the cutoff second may still qualify.
-func TestHistoryTimelineSinceCreatedAtBoundary(t *testing.T) {
-	c := newCluster(t)
-	cutoff := now.Add(-time.Hour)
-	in := cutoff.Add(500 * time.Millisecond)
-	out := cutoff.Add(-500 * time.Millisecond)
-	c.releaseAt("in", "prod", 1, common.StatusDeployed, in, in)    // createdAt label = cutoff
-	c.releaseAt("out", "prod", 1, common.StatusDeployed, out, out) // createdAt label = cutoff - 1s
-	res, err := timeline(t, c, "--since", "1h")
-	wantProblems(t, err, false)
-	if got := revs(res); got != "prod/in/1" {
-		t.Errorf("got %s, want only prod/in/1", got)
+// createdAt and modifiedAt are truncated to seconds and set after LastDeployed, so a record written in the cutoff second
+// may still qualify.
+func TestHistoryTimelineSinceWrittenBoundary(t *testing.T) {
+	for _, wl := range writeLabels {
+		t.Run(wl.name, func(t *testing.T) {
+			c := newCluster(t)
+			cutoff := now.Add(-time.Hour)
+			in := cutoff.Add(500 * time.Millisecond)
+			out := cutoff.Add(-500 * time.Millisecond)
+			wl.store(c, "in", "prod", 1, common.StatusDeployed, in, in)    // label = cutoff
+			wl.store(c, "out", "prod", 1, common.StatusDeployed, out, out) // label = cutoff - 1s
+			res, err := timeline(t, c, "--since", "1h")
+			wantProblems(t, err, false)
+			if got := revs(res); got != "prod/in/1" {
+				t.Errorf("got %s, want only prod/in/1", got)
+			}
+		})
 	}
 }

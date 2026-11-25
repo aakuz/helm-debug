@@ -33,10 +33,10 @@ type timelineResult struct {
 
 func releaseKey(namespace, name string) string { return namespace + "/" + name }
 
-// createdBefore reports whether a record created at t cannot hold a revision updated at or after cutoff.
-// Helm sets Info.LastDeployed before creating the record and truncates createdAt to seconds,
-// so LastDeployed is always below createdAt+1s.
-func createdBefore(t, cutoff time.Time) bool {
+// writtenBefore reports whether a record last written at t cannot hold a revision updated at or after cutoff.
+// Helm sets Info.LastDeployed before it creates or updates the record, and both labels are
+// truncated to seconds, so LastDeployed is always below the write time + 1s.
+func writtenBefore(t, cutoff time.Time) bool {
 	return !t.IsZero() && !t.Add(time.Second).After(cutoff)
 }
 
@@ -64,18 +64,18 @@ func runTimeline(ctx context.Context, o *Options, c *Clients, ns string, since t
 		if r.Status != "" && !wantStatus(r.Status) {
 			continue
 		}
-		if since > 0 && createdBefore(r.Created, cutoff) {
+		if since > 0 && writtenBefore(r.Written, cutoff) {
 			continue
 		}
 		cands = append(cands, r)
 	}
-	// Records without createdAt come first as they cannot be ruled out.
+	// Records without a write time come first as they cannot be ruled out.
 	sort.SliceStable(cands, func(i, j int) bool {
-		zi, zj := cands[i].Created.IsZero(), cands[j].Created.IsZero()
+		zi, zj := cands[i].Written.IsZero(), cands[j].Written.IsZero()
 		if zi != zj {
 			return zi
 		}
-		return cands[i].Created.After(cands[j].Created)
+		return cands[i].Written.After(cands[j].Written)
 	})
 
 	loaded := map[string]*rspb.Release{}
@@ -131,7 +131,7 @@ func runTimeline(ctx context.Context, o *Options, c *Clients, ns string, since t
 		if limit > 0 && len(rows) >= limit && start+batch < len(cands) {
 			sortRows()
 			next := cands[start+batch]
-			if !next.Created.IsZero() && createdBefore(next.Created, rows[limit-1].Updated) {
+			if !next.Written.IsZero() && writtenBefore(next.Written, rows[limit-1].Updated) {
 				break
 			}
 		}
