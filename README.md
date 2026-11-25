@@ -24,6 +24,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`flux status`** – a Flux HelmRelease's conditions next to the history of the Helm release it manages.
 - **`manifests`** – the stored rendered manifest of a release revision, optionally with hooks or split into one file per object.
 - **`notes`** – the stored NOTES.txt of a release revision, like `helm get notes`.
+- **`storage`** – records of a release Helm cannot see (missing or wrong labels, undecodable, left in the other driver), and the record that makes `helm upgrade` fail with `release: already exists`.
 - **`lint`** – render a local chart and show the rendered YAML around every template error and invalid document.
 - **`deprecated`** – apiVersions in a release revision that are removed or deprecated at a target Kubernetes version.
 - **`argo resources`** – resources an ArgoCD Application tracks, with sync, health, live state and Argo tracking metadata.
@@ -408,6 +409,30 @@ Notes are chart-controlled text, so terminal escape sequences, control character
 tab) and Unicode format characters are removed in every output format. Empty notes print nothing and
 exit 0. Exits with 1 if the release or revision does not exist.
 
+### storage
+
+```console
+$ helm-debug storage web -n prod
+```
+
+Finds the storage records of a release by object name `sh.helm.release.v1.RELEASE.vN` in both the secret and configmap drivers, not by labels, and reports per record what is wrong: missing or wrong name, owner, version or status labels; a key that disagrees with its label or body; duplicate version labels; undecodable records; records stored by the driver Helm does not use. `--storage` or `HELM_DRIVER` selects the driver Helm uses, and the output says which one set it. It names the next key `v<latest+1>` and, when that record already exists, prints its labels, creation time and size: that record is the cause of `UPGRADE FAILED: release: already exists` ([helm/helm#13101](https://github.com/helm/helm/issues/13101)). It prints `kubectl delete` and `kubectl label --overwrite` fixes and never runs them. `-o json` and `-o yaml` return the same data. Exits with 2 when a problem is found and 1 when the release has no record in either driver. An empty result does not rule out a concurrent upgrade, which leaves no trace in storage: see `stuck`.
+
+```text
+Release web in namespace prod, storage driver secret (default)
+Helm sees revisions up to 4; the next upgrade writes sh.helm.release.v1.web.v5, which already exists: this record causes "release: already exists".
+  labels: createdAt=1792306800, name=web, status=pending-upgrade, version=5  created: 2026-10-18 07:00:00  size: 124 bytes
+
+DRIVER  OBJECT                     REVISION  STATUS           VISIBLE  CREATED              SIZE  PROBLEMS
+secret  sh.helm.release.v1.web.v1  1         superseded       yes      2026-10-18 03:00:00  120   -
+secret  sh.helm.release.v1.web.v2  2         superseded       yes      2026-10-18 04:00:00  120   -
+secret  sh.helm.release.v1.web.v3  3         superseded       yes      2026-10-18 05:00:00  120   -
+secret  sh.helm.release.v1.web.v4  4         deployed         yes      2026-10-18 06:00:00  120   -
+secret  sh.helm.release.v1.web.v5  5         pending-upgrade  no       2026-10-18 07:00:00  124   next revision: Helm writes this key on the next upgrade; missing label owner
+
+Fixes (not run):
+  kubectl delete secret sh.helm.release.v1.web.v5 -n prod
+```
+
 ### lint
 
 ```bash
@@ -692,7 +717,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 |---|---|
 | 0 | No problems (`diff` always exits 0 when it succeeds) |
 | 1 | Execution error (no access, release not found, bad flags, …) |
-| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`, also any release in its timeline), stuck releases (`stuck`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), problem release status, workload not rolled out or problem pods, or `--wait` timed out (`health`), HelmRelease not Ready or its latest revision failed/pending or no records (`flux status`), Application not Synced/Healthy or a tracked object out of sync, degraded, absent or not tracked (`argo resources`), releases that need cleanup (`audit`), problems found in a chart (`lint`) |
+| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`, also any release in its timeline), stuck releases (`stuck`), records Helm cannot see (`storage`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), problem release status, workload not rolled out or problem pods, or `--wait` timed out (`health`), HelmRelease not Ready or its latest revision failed/pending or no records (`flux status`), Application not Synced/Healthy or a tracked object out of sync, degraded, absent or not tracked (`argo resources`), releases that need cleanup (`audit`), problems found in a chart (`lint`) |
 
 ## RBAC
 
@@ -705,6 +730,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 | `values` | `list` on secrets (or configmaps) in the release namespace |
 | `manifests` | `list` on secrets (or configmaps) in the release namespace |
 | `notes` | `list` on secrets (or configmaps) in the release namespace |
+| `storage` | `list` + `get` on secrets and configmaps in the release namespace |
 | `lint` | Nothing: the chart is rendered locally and the cluster is not contacted |
 | `list` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
 | `find` | `get` on the object; `list` + `get` on secrets (or configmaps) cluster-wide for the scan |
