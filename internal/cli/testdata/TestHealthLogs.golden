@@ -4,6 +4,8 @@ KIND         NAMESPACE  NAME  READY  STATUS     DETAILS
 Deployment   prod       web   1/3    unhealthy  1 of 3 available
 StatefulSet  prod       db    1/1    healthy    -
 
+WAITING FOR: Deployment/web
+
 Pods with problems:
 POD      PHASE    REASON            RESTARTS
 web-aaa  Running  CrashLoopBackOff  7

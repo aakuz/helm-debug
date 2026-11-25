@@ -56,5 +56,8 @@
       "desired": 1,
       "ready": 1
     }
+  ],
+  "waitingFor": [
+    "Deployment/web"
   ]
 }

@@ -67,7 +67,7 @@ check `stuck` (it suggests a rollback to the last good revision) and back up the
 | 27 | Installed chart version? | ✅ `list`, `history` (CHART column) |
 | 28 | appVersion? | ✅ `list`, `history` (APP VERSION column) |
 | 29 | Which Helm client version created the release? | ➖ Helm does not store it in the record |
-| 30 | Which Kubernetes object blocks a Helm operation? | 🟡 `resources` (absent, unknown kind, ownership), `health`, `hooks`; what `--wait` waits for: #46; finalizers: #49 |
+| 30 | Which Kubernetes object blocks a Helm operation? | 🟡 `resources` (absent, unknown kind, ownership), `health`, `hooks`; what `--wait` waits for: `health` (WAITING FOR line); finalizers: #49 |
 
 ## 2. Debugging approach
 
@@ -81,7 +81,7 @@ check `stuck` (it suggests a rollback to the last good revision) and back up the
 | 38–39 | Why does a chart pass `template`/YAML checks but fail on install? | 🟡 API validation, CRDs, admission, ownership; `resources` shows unknown kinds and ownership, `deprecated` removed APIs, webhooks: #57 |
 | 40 | Check a chart against the real API server without installing? | ➖ `helm install --dry-run=server`; preview against the release: #17 |
 | 41–45 | Helm vs Kubernetes, rendering vs API, Helm vs application, chart vs values, Helm vs webhook? | 🟡 `history` holds the API error text; `health` shows app failures; webhook detail: #57; template errors: `helm-debug lint CHART` |
-| 46 | First Kubernetes object that really broke? | 🟡 `resources`, `health`; what `--wait` was waiting for: #46 |
+| 46 | First Kubernetes object that really broke? | 🟡 `resources`, `health`; what `--wait` was waiting for: `health REL` (WAITING FOR line) |
 | 47 | Minimal reproduction of a broken chart? | 🟡 `values REL --output-file v.yaml` + `manifests REL --output-dir dir` give the exact inputs and output |
 | 48 | Expected vs installed manifest? | ✅ `drift REL` (stored vs live), `diff REL A B` (between revisions) |
 | 49 | Did someone change objects after the deployment? | ✅ `drift REL` |
@@ -96,13 +96,13 @@ check `stuck` (it suggests a rollback to the last good revision) and back up the
 | 54 | `cannot re-use a name that is still in use`? | ✅ `list --all` / `history` show the existing record; `stuck` if it is pending |
 | 55–57 | Were objects created before the failure? Partial installs? | ✅ `resources REL` (present/absent per object) |
 | 58–61 | What does `--atomic` do, how does it relate to `--wait`, when does it hide the cause? | ➖ Helm behavior; keep evidence with `history` (the failed revision stays) and #55 (snapshot) |
-| 62–63 | Debugging an install timeout; what is Helm waiting for? | 🟡 `health REL --logs 50` for Deployments/StatefulSets; all `--wait` kinds and a "waiting for" line: #46 |
-| 64 | Can a Job block install? | 🟡 hook Jobs: `hooks`; logs and running state: #47; plain Jobs with `--wait-for-jobs`: #46 |
-| 65–66 | Can a PVC or LoadBalancer Service block `--wait`? | 🔧 #46 |
+| 62–63 | Debugging an install timeout; what is Helm waiting for? | ✅ `health REL --logs 50`; the WAITING FOR line names what `--wait` still waits for |
+| 64 | Can a Job block install? | 🟡 hook Jobs: `hooks`; logs and running state: #47; Jobs with `--wait-for-jobs`: `health REL --wait-for-jobs` |
+| 65–66 | Can a PVC or LoadBalancer Service block `--wait`? | ✅ `health REL` (PVC phase, LoadBalancer address) |
 | 67–69 | 0/1 Ready Deployment, no CPU/memory, ImagePullBackOff with `--wait`? | ✅ `health REL` (readiness, problem pods, `FailedScheduling` events) |
 | 70–71 | Without `--wait`, a pod does not start; can Helm report success while the app is down? | ✅ yes; `health REL` shows it, exit code 2 |
-| 72–73 | `--wait-for-jobs`? | ➖ Helm flag; Job readiness check: #46 |
-| 74–75 | How to change the timeout; why is a longer timeout often wrong? | ➖ `--timeout`; find the real blocker with `health` / #46 first |
+| 72–73 | `--wait-for-jobs`? | ✅ `health REL --wait-for-jobs` checks Job completion and backoff failures |
+| 74–75 | How to change the timeout; why is a longer timeout often wrong? | ➖ `--timeout`; find the real blocker with `health` (WAITING FOR line) first |
 
 ## 4. helm upgrade
 
@@ -302,19 +302,19 @@ The permissions helm-debug itself needs are listed in [README → RBAC](../READM
 | 401–407 | `FailedScheduling`, `FailedMount`, `FailedAttachVolume`, `ErrImagePull`, `ImagePullBackOff`, `CrashLoopBackOff`, readiness probe failures? | ✅ `health REL --logs 50` |
 | 408–409 | Readiness/liveness probes and `--wait`? | ✅ `health` (not-ready replicas, restarts) |
 | 410–413 | PDB blocks rollout; capacity; nodeSelector/affinity; taints? | ✅ `health` (events such as `FailedScheduling`) |
-| 414–415 | PVC `Pending`, LoadBalancer provisioning? | 🔧 #46 |
+| 414–415 | PVC `Pending`, LoadBalancer provisioning? | ✅ `health REL` (`phase Pending`, `no load balancer address yet`) |
 | 416 | Rollout status apart from Helm? | ✅ `health REL --wait` |
 
 ## 22. `--wait`, timeouts and readiness
 
 | # | Question | Answer with helm-debug |
 |---|---|---|
-| 417 | What does Helm consider Ready? | 🟡 `health` uses the same rules for Deployments/StatefulSets; all kinds: #46 |
+| 417 | What does Helm consider Ready? | ✅ `health` uses Helm's readiness rules for each kind `--wait` checks |
 | 418–421 | Default timeout, scope of the timeout, when to use `--wait`? | ➖ Helm CLI (5m, per operation) |
-| 422–423 | `--wait-for-jobs`; Job finishes after Helm timed out? | 🔧 #46 |
-| 424 | Which object is Helm waiting for right now? | 🔧 #46 |
+| 422–423 | `--wait-for-jobs`; Job finishes after Helm timed out? | 🟡 `health REL --wait-for-jobs` shows the Job state at the time of the check |
+| 424 | Which object is Helm waiting for right now? | ✅ `health REL` (WAITING FOR line) |
 | 425–427 | Helm timeout vs `progressDeadlineSeconds`; StatefulSet rollouts longer than 5m? | ✅ `health` reports `ProgressDeadlineExceeded` and StatefulSet progress |
-| 428–430 | Just set 30m; picking timeouts; `context deadline exceeded`? | ➖ measure the rollout with `health --wait` first |
+| 428–430 | Just set 30m; picking timeouts; `context deadline exceeded`? | 🟡 `health REL --wait` and its WAITING FOR line show what is still pending; picking the timeout is a Helm decision |
 
 ## 23. Uninstall
 
@@ -476,7 +476,7 @@ The permissions helm-debug itself needs are listed in [README → RBAC](../READM
 | 614 | New ReplicaSet never becomes Ready: is Helm to blame? | ✅ `health REL --logs 50` |
 | 615 | Timeout only in prod: cluster differences? | 🔧 #26 (compare contexts), #46 |
 | 616 | Chart stopped uninstalling after a Kubernetes upgrade? | 🟡 `deprecated REL`; finalizers: #49 |
-| 617 | Install hangs only with `--wait`? | 🟡 the blocker is readiness, not the API: `health`, all kinds: #46 |
+| 617 | Install hangs only with `--wait`? | 🟡 the blocker is readiness, not the API: `health` (WAITING FOR line) |
 | 618 | `--atomic` removes the failed release: how to keep evidence? | 🔧 #55 |
 | 619 | Post-mortem without CI logs? | ✅ `history` (reasons), `diff`, `drift`; a timeline of all releases, newest first: `history -A --since 24h` |
 | 620 | What to save automatically on a failed deployment? | 🔧 #55 |

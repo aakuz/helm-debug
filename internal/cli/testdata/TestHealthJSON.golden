@@ -39,5 +39,8 @@
       "count": 3,
       "lastSeen": "2026-10-18T11:50:00Z"
     }
+  ],
+  "waitingFor": [
+    "Deployment/web"
   ]
 }

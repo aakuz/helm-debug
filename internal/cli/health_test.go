@@ -187,7 +187,7 @@ func TestHealthNoWorkloads(t *testing.T) {
 	c.release("cfg", "prod", 1, common.StatusDeployed, "apiVersion: v1\nkind: Service\nmetadata:\n  name: cfg\n")
 	out, err := run(t, c, "prod", "health", "cfg")
 	wantProblems(t, err, false)
-	if !strings.Contains(out, "no Deployments or StatefulSets") {
+	if !strings.Contains(out, "no objects that helm --wait waits for") {
 		t.Fatalf("want a note about missing workloads:\n%s", out)
 	}
 }

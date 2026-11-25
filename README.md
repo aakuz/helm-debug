@@ -15,7 +15,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`find`** – which release(s) declare a given object.
 - **`history`** – revisions with status, chart/app version and the stored failure reason; without a release name, a newest-first timeline of all releases in a namespace or the cluster.
 - **`stuck`** – releases stuck in `pending-install/upgrade/rollback` and the command that unlocks them.
-- **`health`** – readiness of the release's Deployments and StatefulSets, crashing pods and recent warning events.
+- **`health`** – readiness of the objects `helm --wait` waits for (workloads, Pods, PVCs, LoadBalancer Services, and Jobs with `--wait-for-jobs`), what is still waiting, crashing pods and recent warning events.
 - **`lost-found`** – objects that claim a Helm release which no longer exists in the cluster.
 - **`hooks`** – hooks of a release revision (event, weight, delete policy, last run) and leftover hook Jobs and Pods.
 - **`list`** – releases with their latest revision, status and chart, like `helm list`.
@@ -520,6 +520,8 @@ KIND         NAMESPACE  NAME  READY  STATUS     DETAILS
 Deployment   prod       web   1/3    unhealthy  1 of 3 available
 StatefulSet  prod       db    1/2    unhealthy  1 of 2 ready
 
+WAITING FOR: Deployment/web, StatefulSet/db
+
 Pods with problems:
 POD      PHASE    REASON            RESTARTS
 web-aaa  Running  CrashLoopBackOff  7
@@ -531,31 +533,59 @@ LAST SEEN  OBJECT               REASON        COUNT  MESSAGE
 10m        Pod/web-aaa          BackOff       12     Back-off restarting failed container
 ```
 
-Checks the Deployments and StatefulSets declared by a release revision; hooks and other kinds are
-ignored. For a Deployment, the rollout is incomplete when the controller has not observed the
+Checks the objects declared by a release revision that `helm --wait` waits for, with Helm's readiness
+rules: Deployments, StatefulSets, DaemonSets, Pods, PersistentVolumeClaims and Services of type
+`LoadBalancer`. Jobs are checked only with `--wait-for-jobs`, the same flag as Helm's. Hooks and other kinds
+are ignored. For a Deployment, the rollout is incomplete when the controller has not observed the
 current generation, replicas are not yet updated or available, old replicas are still pending
 termination, or the rollout reports `ProgressDeadlineExceeded`. For a StatefulSet, it is incomplete
 when the generation is not observed, replicas are not ready, or the replicas at or above the
 `rollingUpdate.partition` are not all updated (the update check is skipped for `OnDelete`).
 
+A DaemonSet is rolled out when its generation is observed, all updated pods are scheduled, and ready pods are at least the desired count minus `maxUnavailable`. A Pod is ready when its `Ready` condition is true. A PersistentVolumeClaim is ready when its phase is `Bound`. A Service is checked only when its manifest type is `LoadBalancer`; it is ready when it has an ingress IP or hostname, or `externalIPs`. A Job is checked only with `--wait-for-jobs`; it is ready when its succeeded pods reach `completions`, and failed when its failures exceed `backoffLimit`. The READY column is blank for PVCs and Services.
+
 Pods are found through the workload's label selector and listed under "Pods with problems" only
 when they failed, or a container is waiting with `CrashLoopBackOff`, `ImagePullBackOff`,
 `ErrImagePull`, `InvalidImageName`, `CreateContainerConfigError`, `CreateContainerError` or
 `RunContainerError`. Restarts are summed over init and regular containers. Warning events from the
-last hour are shown for the workloads, their ReplicaSets and their pods.
+last hour are shown for the checked objects, their ReplicaSets and their pods.
+
+The objects that are not healthy are named on a `WAITING FOR:` line after the table, as `Kind/name` pairs: what `helm --wait` would still be waiting for. The line is omitted when everything is healthy. `-o json` and `-o yaml` carry the same names as `waitingFor`, omitted when empty. A revision that declares none of these objects prints `no objects that helm --wait waits for in this release revision`.
+
+With `--wait-for-jobs` the Jobs are checked as well:
+
+```console
+$ helm-debug health app -n prod --wait-for-jobs
+Release prod/app revision 1 (deployed)
+
+KIND                   NAMESPACE  NAME     READY  STATUS     DETAILS
+DaemonSet              prod       agent    1/3    unhealthy  1 of 3 ready
+Job                    prod       migrate  0/1    unhealthy  failed: 3 failures exceed backoffLimit 2
+PersistentVolumeClaim  prod       data     -      unhealthy  phase Pending
+Pod                    prod       debug    0/1    unhealthy  not ready
+Service                prod       lb       -      unhealthy  no load balancer address yet
+
+WAITING FOR: DaemonSet/agent, Job/migrate, PersistentVolumeClaim/data, Pod/debug, Service/lb
+
+Warning events (last hour):
+LAST SEEN  OBJECT                      REASON                  COUNT  MESSAGE
+2m         PersistentVolumeClaim/data  ProvisioningFailed      4      storageclass.storage.k8s.io "fast" not found
+5m         Service/lb                  SyncLoadBalancerFailed  2      Error syncing load balancer: quota exceeded
+10m        Pod/debug                   FailedScheduling        5      0/3 nodes are available: 3 Insufficient cpu.
+```
 
 `--revision N` (`-r`) inspects an older revision. `-o json` and `-o yaml` return the same data,
-including the events. The command is read-only: it only GETs the workloads, LISTs pods and events
+including the events. The command is read-only: it only GETs the checked objects, LISTs pods and events
 in their namespaces, and reads the release records like the other commands.
 
 Exit code is 0 when the release status is not a problem status, every workload is rolled out and no pod
 is listed. It is 2 when the release status is `pending-install`, `pending-upgrade`, `pending-rollback`,
 `uninstalling` or `failed` (its workloads may not reflect the latest revision yet, so the table prints
-a `warning: release is <status>` line), when a workload is not fully rolled out, absent or could not be
+a `warning: release is <status>` line), when a checked object is not healthy, or a workload could not be
 read (status `error`), or when a pod with problems is listed. Warning events alone do not cause 2. Errors
 that stop the command (for example, no such release or no access to the release records) exit 1.
 
-Within one snapshot the output comes in this order: the release line, the workloads table, the pods with
+Within one snapshot the output comes in this order: the release line, the objects table, the WAITING FOR line, the pods with
 problems, the warning events and, last, the logs, which are the longest part.
 
 `--logs N` (default `0`, off) adds the last N log lines of the containers that explain a problem, and
@@ -580,7 +610,7 @@ logs are a `logs` array per workload (`pod`, `container`, `previous`, `lines`, `
 gain a `container` field.
 
 `--wait` (`-w`) polls until the release is healthy: the release status is not a problem status, every
-workload is rolled out and no pod is listed, which is the condition under which exit code 0 is returned
+checked object is healthy and no pod is listed, which is the condition under which exit code 0 is returned
 without it. `--interval` (default `2s`) is the time between polls and `--timeout` (default `5m`) the
 total wait; both must be positive, and passing either without `--wait` is an error (`--timeout requires
 --wait`). In table mode the state is printed on the first poll and again whenever it changes: a status or
@@ -621,6 +651,8 @@ Release prod/backend revision 2 (deployed)
 KIND        NAMESPACE  NAME     READY  STATUS     DETAILS
 Deployment  prod       backend  1/3    unhealthy  1 of 3 available
 
+WAITING FOR: Deployment/backend
+
 Pods with problems:
 POD          PHASE    REASON            RESTARTS
 backend-aaa  Running  CrashLoopBackOff  7
@@ -647,6 +679,8 @@ Release prod/backend revision 1 (deployed)
 
 KIND        NAMESPACE  NAME     READY  STATUS     DETAILS
 Deployment  prod       backend  1/3    unhealthy  1 of 3 available
+
+WAITING FOR: Deployment/backend
 
 Pods with problems:
 POD          PHASE    REASON            RESTARTS
