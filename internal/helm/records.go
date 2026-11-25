@@ -53,7 +53,7 @@ func (s *Store) Records(ctx context.Context, drv, name, namespace string) ([]Sto
 		}
 		for _, it := range list.Items {
 			rev, ok := recordRevision(it.Name, prefix)
-			if l := it.GetLabels(); !ok && !(l["name"] == name && l["owner"] == "helm") {
+			if l := it.GetLabels(); !ok && (l["name"] != name || l["owner"] != "helm") {
 				continue
 			}
 			rec, ok, err := d.record(ctx, namespace, it.Name, rev)
