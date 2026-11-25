@@ -6,18 +6,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"helm.sh/helm/v4/pkg/release/common"
+	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/aakuz/helm-debug/internal/helm"
 	"github.com/aakuz/helm-debug/internal/kube"
@@ -87,6 +91,8 @@ type workloadHealth struct {
 	Message   string      `json:"message,omitempty"`
 	Pods      []podHealth `json:"pods,omitempty"`
 	Logs      []podLog    `json:"logs,omitempty"`
+
+	gvr schema.GroupVersionResource // where to read the live object; not part of the output
 }
 
 type healthEvent struct {
@@ -105,6 +111,9 @@ type healthResult struct {
 	Workloads   []workloadHealth `json:"workloads"`
 	Events      []healthEvent    `json:"events,omitempty"`
 	EventsError string           `json:"eventsError,omitempty"`
+
+	// WaitingFor are the objects (Kind/Name) that are not healthy, as helm --wait would still be waiting for them.
+	WaitingFor []string `json:"waitingFor,omitempty"`
 }
 
 // releaseProblem reports whether a release status means the release is not (yet) in a good state:
@@ -129,31 +138,59 @@ func (r *healthResult) problems() bool {
 	return false
 }
 
-var workloadGVR = map[string]schema.GroupVersionResource{
-	"Deployment":  {Group: "apps", Version: "v1", Resource: "deployments"},
-	"StatefulSet": {Group: "apps", Version: "v1", Resource: "statefulsets"},
+// The kinds and readiness rules below mirror the ReadyChecker of helm --wait:
+// https://github.com/helm/helm/blob/v4.3.1/pkg/kube/ready.go
+// Keep them in step with it, so that "healthy" here means "helm --wait would stop waiting".
+// Helm 4 uses it with --wait=legacy; the default --wait=watcher judges readiness with kstatus instead.
+type kindKey struct{ apiVersion, kind string }
+
+var workloadGVR = map[kindKey]schema.GroupVersionResource{
+	{"apps/v1", "Deployment"}:       {Group: "apps", Version: "v1", Resource: "deployments"},
+	{"apps/v1", "StatefulSet"}:      {Group: "apps", Version: "v1", Resource: "statefulsets"},
+	{"apps/v1", "DaemonSet"}:        {Group: "apps", Version: "v1", Resource: "daemonsets"},
+	{"batch/v1", "Job"}:             {Group: "batch", Version: "v1", Resource: "jobs"},
+	{"v1", "PersistentVolumeClaim"}: {Version: "v1", Resource: "persistentvolumeclaims"},
+	{"v1", "Service"}:               {Version: "v1", Resource: "services"},
+	{"v1", "Pod"}:                   {Version: "v1", Resource: "pods"},
+}
+
+// waitsFor reports whether helm --wait waits for the object. A Service is judged by its manifest type
+// because the live one is only read to check it.
+func waitsFor(obj helm.Object, opts healthOptions) bool {
+	switch {
+	case len(obj.Hook) > 0, workloadGVR[kindKey{obj.APIVersion, obj.Kind}].Resource == "":
+		return false
+	case obj.Kind == "Job":
+		return opts.waitForJobs
+	case obj.Kind == "Service":
+		return obj.ServiceType == string(corev1.ServiceTypeLoadBalancer)
+	}
+	return true
 }
 
 // healthOptions are the flags that shape one run of the health command.
 type healthOptions struct {
-	revision int
-	logLines int  // --logs: lines of log of the pods that need attention; 0 = none
-	allLogs  int  // --all-logs: lines of log of every started container of every pod; 0 = none
-	tail     bool // with --wait: print only log lines that were not shown before
+	revision    int
+	logLines    int  // --logs: lines of log of the pods that need attention; 0 = none
+	allLogs     int  // --all-logs: lines of log of every started container of every pod; 0 = none
+	tail        bool // with --wait: print only log lines that were not shown before
+	waitForJobs bool // --wait-for-jobs: also check Jobs
 
 	timeout, interval time.Duration
 }
 
 func newHealthCommand(o *Options) *cobra.Command {
 	var revision, logLines, allLogs int
-	var wait, tail bool
+	var wait, tail, waitForJobs bool
 	var timeout, interval time.Duration
 	cmd := &cobra.Command{
 		Use:   "health RELEASE",
-		Short: "Check readiness of the Deployments and StatefulSets of a release",
-		Long: `Check the rollout status of the Deployments and StatefulSets declared by a release
-revision, list their pods that crash or cannot pull an image, and show the warning events of
-the last hour for these workloads and pods. With --logs N it also shows the last N log lines of
+		Short: "Check readiness of the objects of a release that helm --wait waits for",
+		Long: `Check the readiness of the objects declared by a release revision that helm --wait waits for:
+Deployments, StatefulSets, DaemonSets, Pods, PersistentVolumeClaims and Services of type LoadBalancer,
+and with --wait-for-jobs also Jobs. The rules are those of helm --wait. The objects that are not healthy are
+named on the WAITING FOR line. It lists the pods of the workloads that crash or cannot pull an image, and
+shows the warning events of the last hour for these objects and pods. With --logs N it also shows the last N log lines of
 the pods that crash, fail to start or are not ready; --all-logs M shows the last M lines of every
 container of every pod. The two are independent and can be combined: pods that need attention get N
 lines, every other container M. Nothing is changed.
@@ -163,7 +200,7 @@ With --wait (-w) it polls until the release is healthy, printing the state again
 first. Add --tail to print only the log lines that were not shown before, like tail -f.
 With -o json or -o yaml only the final state is printed.
 
-Exits with code 2 when a workload is not fully rolled out or absent, a pod is crashing, or the
+Exits with code 2 when an object is not ready or absent, a pod is crashing, or the
 release itself is pending, uninstalling or failed.`,
 		Example: `  helm-debug health backend -n prod
   helm-debug health backend -w --logs 20
@@ -200,7 +237,7 @@ release itself is pending, uninstalling or failed.`,
 			if err != nil {
 				return err
 			}
-			opts := healthOptions{revision: revision, logLines: logLines, allLogs: allLogs, tail: tail, timeout: timeout, interval: interval}
+			opts := healthOptions{revision: revision, logLines: logLines, allLogs: allLogs, tail: tail, waitForJobs: waitForJobs, timeout: timeout, interval: interval}
 			if wait {
 				return waitHealth(cmd, o, c, args[0], opts)
 			}
@@ -223,6 +260,7 @@ release itself is pending, uninstalling or failed.`,
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "With --wait: time between polls")
 	cmd.Flags().IntVar(&logLines, "logs", 0, "Show the last N log lines of problem and not-ready pods (0 = off)")
 	cmd.Flags().IntVar(&allLogs, "all-logs", 0, "Show the last N log lines of every started container of every pod; --logs sets N for the pods that need attention (0 = off)")
+	cmd.Flags().BoolVar(&waitForJobs, "wait-for-jobs", false, "Also check that Jobs complete, as helm --wait-for-jobs does")
 	cmd.Flags().BoolVar(&tail, "tail", false, "With --wait and --logs/--all-logs: print only log lines not shown before")
 	return cmd
 }
@@ -326,19 +364,22 @@ func runHealth(cmd *cobra.Command, o *Options, c *Clients, name string, opts hea
 	}
 	res := &healthResult{Release: rel.Name, Namespace: rel.Namespace, Revision: rel.Version, Status: string(rel.Info.Status), Workloads: []workloadHealth{}}
 	for _, obj := range helm.Objects(rel) {
-		if len(obj.Hook) > 0 || obj.APIVersion != "apps/v1" || workloadGVR[obj.Kind].Resource == "" {
+		if !waitsFor(obj, opts) {
 			continue
 		}
 		if obj.Namespace == "" {
 			obj.Namespace = rel.Namespace
 		}
-		res.Workloads = append(res.Workloads, workloadHealth{Kind: obj.Kind, Namespace: obj.Namespace, Name: obj.Name})
+		res.Workloads = append(res.Workloads, workloadHealth{Kind: obj.Kind, Namespace: obj.Namespace, Name: obj.Name, gvr: workloadGVR[kindKey{obj.APIVersion, obj.Kind}]})
 	}
+	// Helm waits for the objects in install order, so the table and WAITING FOR follow it too.
+	sort.SliceStable(res.Workloads, func(i, j int) bool {
+		return installRank(res.Workloads[i].Kind) < installRank(res.Workloads[j].Kind)
+	})
 	pods := make([][]corev1.Pod, len(res.Workloads))
 	parallel(len(res.Workloads), o.Concurrency, func(i int) {
 		w := &res.Workloads[i]
-		gvr := workloadGVR[w.Kind]
-		live := c.Cluster.Get(cmd.Context(), kube.Resolved{GVR: gvr, Kind: w.Kind, Namespaced: true}, w.Namespace, w.Name)
+		live := c.Cluster.Get(cmd.Context(), kube.Resolved{GVR: w.gvr, Kind: w.Kind, Namespaced: true}, w.Namespace, w.Name)
 		if live.Status != kube.StatusPresent {
 			w.Status, w.Message = live.Status, live.Error
 			return
@@ -361,26 +402,66 @@ func runHealth(cmd *cobra.Command, o *Options, c *Clients, name string, opts hea
 			}
 			w.Desired, w.Ready, w.Message = statefulSetState(&s)
 			selector = s.Spec.Selector
+		case "DaemonSet":
+			var d appsv1.DaemonSet
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(live.Object.Object, &d); err != nil {
+				w.Status, w.Message = kube.StatusError, err.Error()
+				return
+			}
+			w.Desired, w.Ready, w.Message = daemonSetState(&d)
+			selector = d.Spec.Selector
+		case "Job":
+			var j batchv1.Job
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(live.Object.Object, &j); err != nil {
+				w.Status, w.Message = kube.StatusError, err.Error()
+				return
+			}
+			w.Desired, w.Ready, w.Message = jobState(&j)
+			selector = j.Spec.Selector
+		case "PersistentVolumeClaim":
+			var pvc corev1.PersistentVolumeClaim
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(live.Object.Object, &pvc); err != nil {
+				w.Status, w.Message = kube.StatusError, err.Error()
+				return
+			}
+			w.Message = pvcState(&pvc)
+		case "Service":
+			var svc corev1.Service
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(live.Object.Object, &svc); err != nil {
+				w.Status, w.Message = kube.StatusError, err.Error()
+				return
+			}
+			w.Message = serviceState(&svc)
+		case "Pod":
+			var p corev1.Pod
+			if err := runtime.DefaultUnstructuredConverter.FromUnstructured(live.Object.Object, &p); err != nil {
+				w.Status, w.Message = kube.StatusError, err.Error()
+				return
+			}
+			w.Desired, w.Ready, w.Message = podState(&p)
+			pods[i] = []corev1.Pod{p}
 		}
 		w.Status = healthy
 		if w.Message != "" {
 			w.Status = unhealthy
 		}
-		if selector == nil {
-			return
+		if w.Kind != "Pod" {
+			if selector == nil {
+				return
+			}
+			sel, err := metav1.LabelSelectorAsSelector(selector)
+			if err != nil {
+				w.Status, w.Message = kube.StatusError, "invalid selector: "+err.Error()
+				return
+			}
+			items, err := c.Cluster.ListPods(cmd.Context(), w.Namespace, sel.String())
+			if err != nil {
+				w.Status = kube.StatusError
+				w.Message = strings.TrimPrefix(w.Message+"; listing pods: "+err.Error(), "; ")
+				return
+			}
+			pods[i] = podsFrom(items)
 		}
-		sel, err := metav1.LabelSelectorAsSelector(selector)
-		if err != nil {
-			w.Status, w.Message = kube.StatusError, "invalid selector: "+err.Error()
-			return
-		}
-		items, err := c.Cluster.ListPods(cmd.Context(), w.Namespace, sel.String())
-		if err != nil {
-			w.Status = kube.StatusError
-			w.Message = strings.TrimPrefix(w.Message+"; listing pods: "+err.Error(), "; ")
-			return
-		}
-		pods[i] = podsFrom(items)
 		var targets []logTarget
 		for _, p := range pods[i] {
 			ph := podProblem(p)
@@ -394,6 +475,11 @@ func runHealth(cmd *cobra.Command, o *Options, c *Clients, name string, opts hea
 		}
 	})
 
+	for _, w := range res.Workloads {
+		if w.Status != healthy {
+			res.WaitingFor = append(res.WaitingFor, w.Kind+"/"+w.Name)
+		}
+	}
 	res.Events, res.EventsError = warningEvents(cmd, c, res.Workloads, pods, o.Now())
 	return res, nil
 }
@@ -463,6 +549,85 @@ func statefulSetState(s *appsv1.StatefulSet) (desired, ready int32, msg string) 
 		msg = fmt.Sprintf("%d of %d updated", st.UpdatedReplicas, wantUpdated)
 	}
 	return desired, ready, msg
+}
+
+// daemonSetState is deploymentState for DaemonSets, with Helm's rules rather than kubectl's.
+func daemonSetState(d *appsv1.DaemonSet) (desired, ready int32, msg string) {
+	st := d.Status
+	desired, ready = st.DesiredNumberScheduled, st.NumberReady
+	if st.ObservedGeneration != d.Generation {
+		return desired, ready, fmt.Sprintf("generation %d not yet observed by the controller", d.Generation)
+	}
+	if d.Spec.UpdateStrategy.Type != appsv1.RollingUpdateDaemonSetStrategyType {
+		return desired, ready, ""
+	}
+	if st.UpdatedNumberScheduled != desired {
+		return desired, ready, fmt.Sprintf("%d of %d updated", st.UpdatedNumberScheduled, desired)
+	}
+	// Like Helm, tolerate every pod being unavailable when maxUnavailable is missing or invalid.
+	maxUnavailable := int(desired)
+	if ru := d.Spec.UpdateStrategy.RollingUpdate; ru != nil && ru.MaxUnavailable != nil {
+		if n, err := intstr.GetScaledValueFromIntOrPercent(ru.MaxUnavailable, int(desired), true); err == nil {
+			maxUnavailable = n
+		}
+	}
+	if int(ready) < int(desired)-maxUnavailable {
+		msg = fmt.Sprintf("%d of %d ready", ready, desired)
+	}
+	return desired, ready, msg
+}
+
+// jobState is deploymentState for Jobs: desired is the completions and ready the succeeded pods.
+func jobState(j *batchv1.Job) (desired, ready int32, msg string) {
+	desired, ready = 1, j.Status.Succeeded
+	if j.Spec.Completions != nil {
+		desired = *j.Spec.Completions
+	}
+	backoffLimit := int32(6)
+	if j.Spec.BackoffLimit != nil {
+		backoffLimit = *j.Spec.BackoffLimit
+	}
+	switch {
+	case j.Status.Failed > backoffLimit:
+		msg = fmt.Sprintf("failed: %d failures exceed backoffLimit %d", j.Status.Failed, backoffLimit)
+	case j.Spec.Completions != nil && j.Status.Succeeded < desired:
+		msg = fmt.Sprintf("%d of %d succeeded", j.Status.Succeeded, desired)
+	}
+	return desired, ready, msg
+}
+
+// pvcState names the phase, because Pending (no provisioner, missing StorageClass) and Lost need different fixes.
+func pvcState(p *corev1.PersistentVolumeClaim) string {
+	switch p.Status.Phase {
+	case corev1.ClaimBound:
+		return ""
+	case "":
+		return "phase unknown"
+	}
+	return "phase " + string(p.Status.Phase)
+}
+
+// serviceState checks a LoadBalancer Service; other types are never listed.
+func serviceState(s *corev1.Service) string {
+	switch {
+	case s.Spec.ClusterIP == "":
+		return "no cluster IP"
+	case len(s.Spec.ExternalIPs) > 0:
+		return ""
+	case len(s.Status.LoadBalancer.Ingress) == 0:
+		return "no load balancer address yet"
+	}
+	return ""
+}
+
+// podState is deploymentState for a bare Pod, which counts as one replica.
+func podState(p *corev1.Pod) (desired, ready int32, msg string) {
+	for _, c := range p.Status.Conditions {
+		if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
+			return 1, 1, ""
+		}
+	}
+	return 1, 0, "not ready"
 }
 
 // podProblem returns the pod's state when it failed or a container cannot start or keeps crashing.
@@ -562,19 +727,22 @@ func printHealthState(o *Options, w io.Writer, res *healthResult) {
 		fmt.Fprintf(w, "%s release is %s, so its workloads may not reflect the latest revision yet\n\n", o.paint("warning:", yellow), res.Status)
 	}
 	if len(res.Workloads) == 0 {
-		fmt.Fprintln(w, "no Deployments or StatefulSets in this release revision")
+		fmt.Fprintln(w, "no objects that helm --wait waits for in this release revision")
 		return
 	}
 	t := newTable(w)
 	t.add("KIND", "NAMESPACE", "NAME", "READY", "STATUS", "DETAILS")
 	for _, wl := range res.Workloads {
 		ready := ""
-		if wl.Status == healthy || wl.Status == unhealthy {
+		if (wl.Status == healthy || wl.Status == unhealthy) && wl.Kind != "PersistentVolumeClaim" && wl.Kind != "Service" {
 			ready = fmt.Sprintf("%d/%d", wl.Ready, wl.Desired)
 		}
 		t.add(wl.Kind, wl.Namespace, wl.Name, ready, o.paint(wl.Status, statusColor(wl.Status)), wl.Message)
 	}
 	t.flush()
+	if len(res.WaitingFor) > 0 {
+		fmt.Fprintf(w, "\nWAITING FOR: %s\n", strings.Join(res.WaitingFor, ", "))
+	}
 
 	var pods *table
 	for _, wl := range res.Workloads {
@@ -603,4 +771,9 @@ func printHealthState(o *Options, w io.Writer, res *healthResult) {
 		}
 		et.flush()
 	}
+}
+
+// installRank is the position of a kind in Helm's install order.
+func installRank(kind string) int {
+	return slices.Index(releaseutil.InstallOrder, kind)
 }

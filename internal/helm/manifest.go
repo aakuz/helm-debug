@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,9 @@ type Object struct {
 	Namespace  string   `json:"namespace,omitempty"`
 	Name       string   `json:"name"`
 	Hook       []string `json:"hook,omitempty"`
+
+	// ServiceType is spec.type as written in the manifest, set for Services only.
+	ServiceType string `json:"-"`
 }
 
 type head struct {
@@ -26,10 +30,21 @@ type head struct {
 		Name      string `json:"name"`
 		Namespace string `json:"namespace"`
 	} `json:"metadata"`
+	// Spec stays raw: other kinds may give spec or spec.type any shape, which must not drop the object.
+	Spec json.RawMessage `json:"spec"`
 }
 
 func (h head) object() Object {
-	return Object{APIVersion: h.APIVersion, Kind: h.Kind, Namespace: h.Metadata.Namespace, Name: h.Metadata.Name}
+	o := Object{APIVersion: h.APIVersion, Kind: h.Kind, Namespace: h.Metadata.Namespace, Name: h.Metadata.Name}
+	if h.Kind == "Service" {
+		var spec struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(h.Spec, &spec) == nil {
+			o.ServiceType = spec.Type
+		}
+	}
+	return o
 }
 
 func parse(doc string) (head, bool) {

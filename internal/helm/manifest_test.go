@@ -57,6 +57,17 @@ func TestObjects(t *testing.T) {
 			[]Object{{APIVersion: "v1", Kind: "Service", Name: "ok"}},
 		},
 		{
+			"service type is kept for Services; any spec shape of other kinds is accepted",
+			&rspb.Release{Manifest: "---\n" + doc("v1", "Service", "", "lb") + "spec: {type: LoadBalancer}\n" +
+				"---\n" + doc("example.com/v1", "Widget", "", "w") + "spec: {type: {name: x}}\n" +
+				"---\n" + doc("example.com/v1", "Gadget", "", "g") + "spec: [1, 2]\n"},
+			[]Object{
+				{APIVersion: "example.com/v1", Kind: "Gadget", Name: "g"},
+				{APIVersion: "v1", Kind: "Service", Name: "lb", ServiceType: "LoadBalancer"},
+				{APIVersion: "example.com/v1", Kind: "Widget", Name: "w"},
+			},
+		},
+		{
 			"hooks go after non-hooks; no events becomes hook; invalid hook skipped",
 			&rspb.Release{
 				Manifest: doc("v1", "Service", "", "web"),

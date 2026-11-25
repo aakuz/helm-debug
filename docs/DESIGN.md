@@ -113,14 +113,25 @@ or `helm uninstall` when no good revision exists (a failed first install).
 
 ## Health
 
-Only `apps/v1` Deployments and StatefulSets of a revision are checked (hooks and other kinds are
-ignored); they are fetched through fixed resources, so no REST mapping is needed. Rollout rules:
+The objects checked are the ones `helm --wait` waits for: `apps/v1` Deployments, StatefulSets and DaemonSets,
+Pods, PersistentVolumeClaims, Services of type LoadBalancer, and Jobs only with `--wait-for-jobs`. Hooks and
+other kinds are ignored. They are fetched through fixed resources, so no REST mapping is needed. Rollout rules:
 
 - Deployment: incomplete when `observedGeneration` is behind, `ProgressDeadlineExceeded` is set,
   updated replicas are below the desired count, old replicas still exist, or available replicas are
   below the desired count (the same checks as `kubectl rollout status`).
 - StatefulSet: incomplete when `observedGeneration` is behind or ready replicas are below the desired
   count; updated replicas are compared against `replicas - partition`, and not at all for `OnDelete`.
+- DaemonSet: incomplete when `observedGeneration` is behind, updated pods are not all scheduled, or ready pods are
+  below the desired count minus `maxUnavailable`.
+- Pod: incomplete unless its `Ready` condition is true.
+- PersistentVolumeClaim: incomplete unless the phase is `Bound`.
+- Service: only type `LoadBalancer` is checked; incomplete until the status has an ingress IP or hostname, or the
+  spec has `externalIPs`.
+- Job (only with `--wait-for-jobs`): incomplete while succeeded pods are below `completions` (no `completions` counts as
+  complete, as in Helm); failed once failures exceed `backoffLimit`.
+
+Every object that is not healthy is collected into `waitingFor` (the `WAITING FOR:` line; omitted when empty).
 
 The release status is part of the decision too: `pending-install`, `pending-upgrade`, `pending-rollback`,
 `uninstalling` and `failed` are problems in both modes, even when the workloads look healthy, because an
@@ -131,7 +142,7 @@ Pods come from the workload's label selector, so workloads with overlapping sele
 other's pods and old-ReplicaSet pods are included during a rollout. A pod is reported only when it
 failed or a container waits with a known bad reason; unschedulable `Pending` pods and `minReadySeconds`
 are only visible through the replica counts and events. Warning events of the last hour (a fixed
-window) are matched by involved object: the workload, its pods, and ReplicaSets named
+window) are matched by involved object: the checked object, its pods, and ReplicaSets named
 `<deployment>-<hash>`. Events never change the exit code; a lookup error for a workload does.
 
 `--wait` runs the same snapshot as a single call on every poll and compares it with the previous one
