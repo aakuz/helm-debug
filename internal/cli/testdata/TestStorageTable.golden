@@ -1,0 +1,13 @@
+Release web in namespace prod, storage driver secret (default)
+Helm sees revisions up to 4; the next upgrade writes sh.helm.release.v1.web.v5, which already exists: this record causes "release: already exists".
+  labels: createdAt=1792306800, name=web, status=pending-upgrade, version=5  created: 2026-10-18 07:00:00  size: 124 bytes
+
+DRIVER  OBJECT                     REVISION  STATUS           VISIBLE  CREATED              SIZE  PROBLEMS
+secret  sh.helm.release.v1.web.v1  1         superseded       yes      2026-10-18 03:00:00  120   -
+secret  sh.helm.release.v1.web.v2  2         superseded       yes      2026-10-18 04:00:00  120   -
+secret  sh.helm.release.v1.web.v3  3         superseded       yes      2026-10-18 05:00:00  120   -
+secret  sh.helm.release.v1.web.v4  4         deployed         yes      2026-10-18 06:00:00  120   -
+secret  sh.helm.release.v1.web.v5  5         pending-upgrade  no       2026-10-18 07:00:00  124   next revision: Helm writes this key on the next upgrade; missing label owner
+
+Fixes (not run):
+  kubectl delete secret sh.helm.release.v1.web.v5 -n prod

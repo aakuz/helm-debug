@@ -132,6 +132,17 @@ func (c *cluster) clients(namespace string) *Clients {
 			ObjectMeta: s.ObjectMeta,
 		})
 	}
+	// ConfigMaps hold the records of the configmap storage driver.
+	cms, err := c.kube.CoreV1().ConfigMaps("").List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	for _, cm := range cms.Items {
+		metas = append(metas, &metav1.PartialObjectMetadata{
+			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+			ObjectMeta: cm.ObjectMeta,
+		})
+	}
 	for _, o := range c.live {
 		u := o.(*unstructured.Unstructured)
 		metas = append(metas, &metav1.PartialObjectMetadata{

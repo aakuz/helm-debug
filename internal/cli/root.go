@@ -233,6 +233,7 @@ func NewRootCommand(o *Options) *cobra.Command {
 		newFluxCommand(o),
 		newManifestsCommand(o),
 		newNotesCommand(o),
+		newStorageCommand(o),
 		newArgoCommand(o),
 		newLintCommand(o),
 	)
