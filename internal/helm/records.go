@@ -16,11 +16,18 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// StoredRecord is a storage object whose name is a record key of a release, read whatever its labels say.
+// RecordKey is the key Helm stores a revision of a release under.
+func RecordKey(name string, revision int) string {
+	return recordKeyPrefix(name) + strconv.Itoa(revision)
+}
+
+func recordKeyPrefix(name string) string { return "sh.helm.release.v1." + name + ".v" }
+
+// StoredRecord is a storage object that is a record key of a release or that Helm's labels select for it.
 type StoredRecord struct {
 	Driver    string            // StorageSecret or StorageConfigMap
-	Object    string            // object name, the record key sh.helm.release.v1.NAME.vN
-	Revision  int               // N parsed from the key
+	Object    string            // object name, normally the record key sh.helm.release.v1.NAME.vN
+	Revision  int               // N parsed from the key; 0 when the key is not a record key of the release
 	Labels    map[string]string // labels as stored
 	Created   time.Time         // creationTimestamp
 	Bytes     int               // Secret .data; ConfigMap .data + .binaryData
@@ -28,12 +35,14 @@ type StoredRecord struct {
 	DecodeErr error
 }
 
-// Records returns every object of the given storage that is a record key of the release, sorted by revision.
-// Objects are matched by name, not by labels, because records with broken labels are what this is meant to find.
+// Records returns every object of the given storage that is a record key of the release or is labelled
+// name=NAME,owner=helm, sorted by revision. Keys are matched whatever the labels say, because records with
+// broken labels are what this is meant to find. Labelled objects are matched whatever their key, because
+// Helm's History selects by those labels, so a copied or renamed object counts towards its latest revision.
 func (s *Store) Records(ctx context.Context, drv, name, namespace string) ([]StoredRecord, error) {
 	d := *s
 	d.Driver = drv
-	prefix := "sh.helm.release.v1." + name + ".v"
+	prefix := recordKeyPrefix(name)
 
 	var recs []StoredRecord
 	opts := metav1.ListOptions{Limit: pageSize}
@@ -44,7 +53,7 @@ func (s *Store) Records(ctx context.Context, drv, name, namespace string) ([]Sto
 		}
 		for _, it := range list.Items {
 			rev, ok := recordRevision(it.Name, prefix)
-			if !ok {
+			if l := it.GetLabels(); !ok && !(l["name"] == name && l["owner"] == "helm") {
 				continue
 			}
 			rec, ok, err := d.record(ctx, namespace, it.Name, rev)

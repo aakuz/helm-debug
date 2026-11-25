@@ -181,7 +181,8 @@ func TestAnalyzeStorage(t *testing.T) {
 			records: []wantRecord{ok(sec, 1), {
 				driver: sec, object: storageKey("web", 2), visible: true,
 				problems: []string{"record says api revision 2"},
-				fix:      labelFix("secret", 2, "deployed"),
+				// Relabelling cannot fix a body that disagrees with its key: the record must go.
+				fix: deleteFix("secret", 2),
 			}},
 		},
 		{
@@ -193,8 +194,39 @@ func TestAnalyzeStorage(t *testing.T) {
 			records: []wantRecord{ok(sec, 1), {
 				driver: sec, object: storageKey("web", 2), visible: true,
 				problems: []string{"record says web revision 3"},
-				fix:      labelFix("secret", 2, "deployed"),
+				// Relabelling cannot fix a body that disagrees with its key: the record must go.
+				fix: deleteFix("secret", 2),
 			}},
+		},
+		{
+			// A copy of revision 7 under a name Helm does not write still counts, as Helm lists records by labels.
+			name:     "labelled copy under another name",
+			selected: sec,
+			sel: []helm.StoredRecord{
+				good(sec, 1, sup), good(sec, 2, dep),
+				{Driver: sec, Object: "web-backup", Revision: 0, Labels: helmLabels(7, "deployed"), Release: body("web", 7, dep)},
+			},
+			latest: 7, next: storageKey("web", 8),
+			records: []wantRecord{{
+				driver: sec, object: "web-backup", visible: true,
+				problems: []string{"label version=7, key says 0", "record says web revision 7"},
+				fix:      "kubectl delete secret web-backup -n prod",
+			}, ok(sec, 1), ok(sec, 2)},
+		},
+		{
+			// Relabelling would keep another release's record in web's history, so it is deleted.
+			name:     "another release's key labelled as web",
+			selected: cm,
+			sel: []helm.StoredRecord{
+				good(cm, 1, dep),
+				{Driver: cm, Object: storageKey("other", 3), Revision: 0, Labels: helmLabels(3, "superseded"), Release: body("other", 3, sup)},
+			},
+			latest: 3, next: storageKey("web", 4),
+			records: []wantRecord{{
+				driver: cm, object: storageKey("other", 3), visible: true,
+				problems: []string{"label version=3, key says 0", "record says other revision 3"},
+				fix:      "kubectl delete configmap sh.helm.release.v1.other.v3 -n prod",
+			}, ok(cm, 1)},
 		},
 		{
 			name:     "duplicate version label",
@@ -743,5 +775,46 @@ func TestStorageArgs(t *testing.T) {
 	}{{nil, "accepts 1 arg(s), received 0"}, {[]string{"a", "b"}, "accepts 1 arg(s), received 2"}} {
 		_, err := runStorage(t, c, tc.args...)
 		wantExecError(t, err, tc.want)
+	}
+}
+
+// TestStorageLabelledCopy: a copy of a record under another name, labelled name=web,owner=helm, is listed by Helm
+// and sets its latest revision; the command finds it and says to delete it.
+func TestStorageLabelledCopy(t *testing.T) {
+	t.Parallel()
+	c := healthyWeb(t)
+	storeRecord(c, helm.StorageSecret, "web-backup", body("web", 7, common.StatusDeployed), func(l map[string]string) {
+		for k := range l {
+			if k != "name" && k != "owner" {
+				delete(l, k)
+			}
+		}
+	})
+	res, err := storageJSONOf(t, c, "web")
+	wantProblems(t, err, true)
+	if res.LatestRevision != 7 || res.NextObject != "sh.helm.release.v1.web.v8" || res.NextExists {
+		t.Errorf("latest=%d next=%q exists=%v, want 7 sh.helm.release.v1.web.v8 false", res.LatestRevision, res.NextObject, res.NextExists)
+	}
+	if len(res.Records) != 3 {
+		t.Fatalf("want web-backup, v1 and v2, got %+v", res.Records)
+	}
+	r := res.Records[0]
+	if r.Driver != "secret" || r.Object != "web-backup" || r.Revision != 0 || !r.Visible || r.Status != "deployed" {
+		t.Errorf("web-backup: %+v", r)
+	}
+	found := false
+	for _, p := range r.Problems {
+		found = found || p == "record says web revision 7"
+	}
+	if !found {
+		t.Errorf("web-backup problems %q, want \"record says web revision 7\"", r.Problems)
+	}
+	if want := "kubectl delete secret web-backup -n prod"; r.Fix != want {
+		t.Errorf("web-backup fix %q, want %q", r.Fix, want)
+	}
+	for i, r := range res.Records[1:] {
+		if r.Object != storageKey("web", i+1) || !r.Visible || r.Problems != nil {
+			t.Errorf("record %d: %+v", i+1, r)
+		}
 	}
 }

@@ -163,17 +163,21 @@ func TestRecordsMatchesExactName(t *testing.T) {
 			rec := func(ns, key, rel string, ver int) runtime.Object {
 				return recordObject(t, drv, ns, key, testRelease(rel, ns, ver), helmLabels(rel, "1"))
 			}
+			// junk carries another release's labels: objects labelled name=web,owner=helm are web's whatever their key.
+			junk := func(key string) runtime.Object {
+				return recordObject(t, drv, "prod", key, testRelease("web", "prod", 1), helmLabels("other", "1"))
+			}
 			s := recordStore(t,
 				rec("prod", "sh.helm.release.v1.web.v1", "web", 1),
 				rec("prod", "sh.helm.release.v1.web.v9", "web", 9),
 				rec("prod", "sh.helm.release.v1.web.v12", "web", 12),
 				rec("prod", "sh.helm.release.v1.web-api.v1", "web-api", 1),
 				rec("prod", "sh.helm.release.v1.web.v2.v1", "web.v2", 1),
-				rec("prod", "sh.helm.release.v1.web.vx", "web", 1),
-				rec("prod", "sh.helm.release.v1.web.v", "web", 1),
-				rec("prod", "sh.helm.release.v1.web.v1x", "web", 1),
-				rec("prod", "xsh.helm.release.v1.web.v1", "web", 1),
-				rec("prod", "default-token", "web", 1),
+				junk("sh.helm.release.v1.web.vx"),
+				junk("sh.helm.release.v1.web.v"),
+				junk("sh.helm.release.v1.web.v1x"),
+				junk("xsh.helm.release.v1.web.v1"),
+				junk("default-token"),
 				rec("staging", "sh.helm.release.v1.web.v3", "web", 3),
 			)
 
@@ -354,7 +358,8 @@ func TestRecordsNone(t *testing.T) {
 	}{
 		{"empty storage", nil},
 		{"unrelated objects", []runtime.Object{
-			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "prod", Name: "default-token", Labels: map[string]string{"owner": "helm", "name": "web"}}},
+			// Labelled as another release: Helm would not count it towards web.
+			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "prod", Name: "default-token", Labels: map[string]string{"owner": "helm", "name": "api"}}},
 			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "prod", Name: "sh.helm.release.v1.api.v1"}},
 			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "dev", Name: "sh.helm.release.v1.web.v1"}},
 		}},
@@ -449,5 +454,118 @@ func TestRecordsSkipsVanishedObject(t *testing.T) {
 				t.Errorf("Records objects = %v, want only the record still present", got)
 			}
 		})
+	}
+}
+
+// Helm lists a release by the labels name=NAME,owner=helm whatever the object key, so a copied or renamed object
+// with those labels counts towards Helm's latest revision. Records returns it too, with revision 0 because its key
+// is not a record key of the release.
+func TestRecordsFindsLabelledObjectsUnderOtherKeys(t *testing.T) {
+	t.Parallel()
+	for _, drv := range drivers {
+		t.Run(drv, func(t *testing.T) {
+			t.Parallel()
+			copyLabels := map[string]string{"name": "web", "owner": "helm"}
+			s := recordStore(t,
+				recordObject(t, drv, "prod", "sh.helm.release.v1.web.v1", testRelease("web", "prod", 1), helmLabels("web", "1")),
+				recordObject(t, drv, "prod", "sh.helm.release.v1.web.v2", testRelease("web", "prod", 2), helmLabels("web", "2")),
+				recordObject(t, drv, "prod", "web-backup", testRelease("web", "prod", 7), copyLabels),
+				// A record key of release "other" is not a key of web.
+				recordObject(t, drv, "prod", "sh.helm.release.v1.other.v3", testRelease("other", "prod", 3), helmLabels("web", "3")),
+			)
+
+			recs, err := s.Records(context.Background(), drv, "web", "prod")
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Revision 0 sorts first, then by object name.
+			want := []string{"sh.helm.release.v1.other.v3", "web-backup", "sh.helm.release.v1.web.v1", "sh.helm.release.v1.web.v2"}
+			if got := recordObjects(recs); !reflect.DeepEqual(got, want) {
+				t.Fatalf("Records objects = %v, want %v", got, want)
+			}
+			var revs []int
+			for _, r := range recs {
+				revs = append(revs, r.Revision)
+			}
+			if !reflect.DeepEqual(revs, []int{0, 0, 1, 2}) {
+				t.Errorf("revisions = %v, want [0 0 1 2]", revs)
+			}
+			other, backup := recs[0], recs[1]
+			if other.Driver != drv || other.Release == nil || other.Release.Name != "other" || other.Release.Version != 3 {
+				t.Errorf("other.v3 = %+v, want driver %s and the decoded body other v3", other, drv)
+			}
+			if !reflect.DeepEqual(other.Labels, helmLabels("web", "3")) {
+				t.Errorf("other.v3 Labels = %v, want as stored", other.Labels)
+			}
+			if backup.Driver != drv || backup.DecodeErr != nil || backup.Release == nil || backup.Release.Name != "web" || backup.Release.Version != 7 {
+				t.Errorf("web-backup = %+v, want driver %s and the decoded body web v7", backup, drv)
+			}
+			if !reflect.DeepEqual(backup.Labels, copyLabels) {
+				t.Errorf("web-backup Labels = %v, want %v", backup.Labels, copyLabels)
+			}
+			if !backup.Created.Equal(recordCreated) || backup.Bytes == 0 {
+				t.Errorf("web-backup Created = %v, Bytes = %d; want %v and its size", backup.Created, backup.Bytes, recordCreated)
+			}
+		})
+	}
+}
+
+// A record key of the release that also carries the release's labels is one record, not two.
+func TestRecordsLabelledRecordKeyListedOnce(t *testing.T) {
+	t.Parallel()
+	for _, drv := range drivers {
+		t.Run(drv, func(t *testing.T) {
+			t.Parallel()
+			obj := recordObject(t, drv, "prod", "sh.helm.release.v1.web.v4", testRelease("web", "prod", 4), helmLabels("web", "4"))
+			recs, err := recordStore(t, obj).Records(context.Background(), drv, "web", "prod")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(recs) != 1 || recs[0].Revision != 4 {
+				t.Errorf("Records = %+v, want one record with revision 4", recs)
+			}
+		})
+	}
+}
+
+// Only both labels name=NAME and owner=helm pull an object under another key into the release, and only in its namespace.
+func TestRecordsIgnoresObjectsLabelledOtherwise(t *testing.T) {
+	t.Parallel()
+	for _, drv := range drivers {
+		t.Run(drv, func(t *testing.T) {
+			t.Parallel()
+			s := recordStore(t,
+				recordObject(t, drv, "prod", "sh.helm.release.v1.web.v1", testRelease("web", "prod", 1), helmLabels("web", "1")),
+				recordObject(t, drv, "prod", "other-backup", testRelease("other", "prod", 1), map[string]string{"name": "other", "owner": "helm"}),
+				recordObject(t, drv, "prod", "web-not-helm", testRelease("web", "prod", 2), map[string]string{"name": "web", "owner": "foo"}),
+				recordObject(t, drv, "prod", "web-no-owner", testRelease("web", "prod", 3), map[string]string{"name": "web"}),
+				recordObject(t, drv, "staging", "web-backup", testRelease("web", "staging", 4), map[string]string{"name": "web", "owner": "helm"}),
+			)
+			recs, err := s.Records(context.Background(), drv, "web", "prod")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := recordObjects(recs); !reflect.DeepEqual(got, []string{"sh.helm.release.v1.web.v1"}) {
+				t.Errorf("Records objects = %v, want only web's own record", got)
+			}
+		})
+	}
+}
+
+func TestRecordKey(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		rev  int
+		want string
+	}{
+		{"web", 1, "sh.helm.release.v1.web.v1"},
+		{"web", 12, "sh.helm.release.v1.web.v12"},
+		{"web.v2", 3, "sh.helm.release.v1.web.v2.v3"},
+		{"web-api", 0, "sh.helm.release.v1.web-api.v0"},
+	} {
+		if got := RecordKey(tc.name, tc.rev); got != tc.want {
+			t.Errorf("RecordKey(%q, %d) = %q, want %q", tc.name, tc.rev, got, tc.want)
+		}
 	}
 }

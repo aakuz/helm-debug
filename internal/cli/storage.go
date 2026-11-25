@@ -113,7 +113,7 @@ func analyzeStorage(name, ns, selected string, sel, other []helm.StoredRecord) s
 	}
 	res := storageResult{
 		Release: name, Namespace: ns, Driver: selected, LatestRevision: latest,
-		NextObject: fmt.Sprintf("sh.helm.release.v1.%s.v%d", name, latest+1),
+		NextObject: helm.RecordKey(name, latest+1),
 		Records:    []storageRecord{},
 	}
 	for _, group := range [][]helm.StoredRecord{sel, other} {
@@ -125,8 +125,9 @@ func analyzeStorage(name, ns, selected string, sel, other []helm.StoredRecord) s
 			return sorted[i].Object < sorted[j].Object
 		})
 		for _, r := range sorted {
-			rec := checkRecord(name, ns, selected, r, sorted, r.Driver == selected && r.Object == res.NextObject)
-			if rec.Object == res.NextObject && rec.Driver == selected {
+			isNext := r.Driver == selected && r.Object == res.NextObject
+			rec := checkRecord(name, ns, selected, r, sorted, isNext)
+			if isNext {
 				res.NextExists = true
 			}
 			res.Records = append(res.Records, rec)
@@ -176,7 +177,8 @@ func checkRecord(name, ns, selected string, r helm.StoredRecord, same []helm.Sto
 	if r.Release != nil {
 		checkLabel("status", status, "record says "+status)
 	}
-	if r.Release != nil && (r.Release.Name != name || r.Release.Version != r.Revision) {
+	bodyMismatch := r.Release != nil && (r.Release.Name != name || r.Release.Version != r.Revision)
+	if bodyMismatch {
 		add("record says %s revision %d", cleanLine(r.Release.Name), r.Release.Version)
 	}
 	if v := r.Labels["version"]; v != "" {
@@ -192,15 +194,13 @@ func checkRecord(name, ns, selected string, r helm.StoredRecord, same []helm.Sto
 	if r.Driver != selected {
 		add("stored by the %s driver, Helm uses %s", r.Driver, selected)
 	}
-	kind := "secret"
-	if r.Driver == helm.StorageConfigMap {
-		kind = "configmap"
-	}
+	// The driver names are the kubectl kinds. A body that disagrees with its key is deleted, not relabelled:
+	// labels would pull a foreign release into the history or keep the mismatch.
 	switch {
-	case r.DecodeErr != nil || isNext:
-		rec.Fix = fmt.Sprintf("kubectl delete %s %s -n %s", kind, r.Object, ns)
+	case r.DecodeErr != nil || isNext || bodyMismatch:
+		rec.Fix = fmt.Sprintf("kubectl delete %s %s -n %s", r.Driver, r.Object, ns)
 	case labelsBroken:
-		rec.Fix = fmt.Sprintf("kubectl label %s %s -n %s --overwrite name=%s owner=helm version=%d", kind, r.Object, ns, name, r.Revision)
+		rec.Fix = fmt.Sprintf("kubectl label %s %s -n %s --overwrite name=%s owner=helm version=%d", r.Driver, r.Object, ns, name, r.Revision)
 		if r.Release != nil {
 			rec.Fix += " status=" + status
 		}
