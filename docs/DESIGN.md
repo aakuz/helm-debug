@@ -98,6 +98,17 @@ Masking is skipped with `--show-secrets`. User values (`Release.Config`) are dif
 YAML, unmasked. A difference is information,
 so the exit code is 0; only errors (unknown revision, bad arguments) exit 1.
 
+## Immutable fields
+
+`internal/kube/immutable.go` holds one table of fields Kubernetes rejects changes to, keyed by API group
+and kind, not version, since those rules do not change between versions. A changed JSON pointer matches
+a table path when it equals the path or lies under it. `diff` computes the changed paths on the unmasked
+objects in both directions (the union of `ChangedPaths(old, new)` and `ChangedPaths(new, old)`), so a
+field that is only added counts too, and reports the object as `immutable` instead of `changed`. `drift`
+only compares declared fields, so controller-added or defaulted values never match. The suggested
+`kubectl delete` commands are printed, never run, to keep the tool read-only (ADR-0003). `diff` keeps
+exit code 0, since a difference is information.
+
 ## Ownership
 
 Helm adopts and updates an existing object only if it has:

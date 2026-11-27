@@ -236,6 +236,11 @@ list reordering can be reported as drift. Secret
 `stringData` is compared against its stored `data` representation. Hooks are excluded because Helm
 commonly deletes them after execution. This compares stored intent, not a newly rendered chart.
 
+A drifted object whose drifted paths touch an immutable field (see `diff`) also gets an `immutable`
+object (`fields`, `reference`, `command`, `note`), and the same `Immutable fields` block is printed
+after the table, with a header saying that the live value differs from the release. The status stays
+`drifted`. Only declared fields count, so values added or defaulted by controllers never trigger it.
+
 Exit code is 0 when in sync, 2 for drift, and 1 for lookup or manifest errors (including unknown
 kinds). An execution error takes precedence over drift when both occur.
 
@@ -316,6 +321,39 @@ Secret `data` and `stringData` values are masked unless `--show-secrets` is set:
 print as `<masked>`, and a value that changed prints as `<masked:old>` and `<masked:new>`. User
 values are shown as stored, so do not keep secrets in them. `-o json` and `-o yaml` return the objects with their status and diff text,
 and the values diff. Only storage records are read, never live objects.
+
+An object whose change touches a field Kubernetes rejects in place gets the status `immutable`
+instead of `changed`. Below the table, an `Immutable fields` block lists the fields, the API reference
+and a `kubectl` command that would recreate the object (with `--cascade=orphan` for StatefulSets, which
+keeps the Pods and claims). The command is printed, never run. So `diff RELEASE CURRENT TARGET` shows
+whether a rollback will fail with `field is immutable`. Covered fields: Deployment, ReplicaSet and
+DaemonSet `selector`; StatefulSet `podManagementPolicy`, `selector`, `serviceName`, `volumeClaimTemplates`;
+Job `completionMode`, `selector`, `template`; Service `clusterIP`, `clusterIPs`; PersistentVolumeClaim
+`accessModes`, `dataSource`, `selector`, `storageClassName`, `volumeMode`, `volumeName`; StorageClass
+`parameters`, `provisioner`, `reclaimPolicy`, `volumeBindingMode`; RoleBinding and ClusterRoleBinding `roleRef`.
+
+```console
+$ helm-debug diff api 1 2 -n prod
+KIND         NAMESPACE  NAME     STATUS
+Deployment   prod       api      changed
+Job          prod       migrate  immutable
+Service      prod       db       immutable
+StatefulSet  prod       db       immutable
+
+Immutable fields (Kubernetes rejects the change in place: "field is immutable"):
+  Job prod/migrate: /spec/template
+    reference: https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/job-v1/#JobSpec
+    to apply it (not run): kubectl -n prod delete job/migrate
+      the next upgrade or rollback recreates it
+  Service prod/db: /spec/clusterIP
+    reference: https://kubernetes.io/docs/reference/kubernetes-api/service-resources/service-v1/#ServiceSpec
+    to apply it (not run): kubectl -n prod delete service/db
+      the next upgrade or rollback recreates it
+  StatefulSet prod/db: /spec/serviceName, /spec/volumeClaimTemplates
+    reference: https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/stateful-set-v1/#StatefulSetSpec
+    to apply it (not run): kubectl -n prod delete statefulset/db --cascade=orphan
+      keeps the Pods and PersistentVolumeClaims; the next upgrade or rollback recreates the StatefulSet and it adopts them
+```
 
 Exit code is 0 whether or not the revisions differ; unknown revisions and other errors exit 1.
 
