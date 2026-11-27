@@ -335,7 +335,7 @@ The permissions helm-debug itself needs are listed in [README → RBAC](../READM
 
 | # | Question | Answer with helm-debug |
 |---|---|---|
-| 454–461 | What finalizers are, which controller owns one, risks of patching, dead operator, CRD finalizers, recovery order? | ✅ `resources REL` (what well-known finalizers wait for, controller prefix and its Deployments, printed patch with a warning) |
+| 454–461 | What finalizers are, which controller owns one, risks of patching, dead operator, CRD finalizers, recovery order? | 🟡 `resources REL` (what well-known finalizers wait for, controller prefix and its Deployments, printed patch with a warning); recovery order is up to you |
 
 ## 25. `helm.sh/resource-policy: keep`
 

@@ -157,8 +157,10 @@ problem because hooks are usually deleted by their delete policy.
 
 Objects with a `deletionTimestamp` are shown as `terminating`. Below the table, a `Terminating objects:`
 block explains the finalizers each one still carries: well-known ones say what they wait for, others
-name the controller and the Deployments that run it. A `Clearing finalizers` block prints (never runs)
-the `kubectl patch` commands that remove them, with a warning that this skips the controller's cleanup.
+name the controller and the Deployments that run it (finalizers of built-in
+`kubernetes.io`/`k8s.io` controllers are not looked up). A `Clearing finalizers` block prints (never runs)
+the `kubectl patch` commands that remove them, with a warning that this skips the controller's cleanup;
+objects held only by well-known finalizers get none, since the fix is to resolve what they wait for.
 Terminating objects make the exit code 2, except hooks. Listing Deployments needs optional `list` on
 `deployments.apps` in all namespaces; without it the line says `not checked` and the command still succeeds.
 
@@ -184,7 +186,6 @@ Terminating objects:
     example.com/cleanup: set by controller example.com; Deployments named example*: none - the controller may be uninstalled
 
 Clearing finalizers (last resort - removing a finalizer skips the controller's cleanup; first check that the controller is gone):
-  kubectl -n prod patch PersistentVolumeClaim/data --type=merge -p '{"metadata":{"finalizers":null}}'
   kubectl -n prod patch Service/web --type=merge -p '{"metadata":{"finalizers":null}}'
   kubectl patch Widget/backend-widget --type=merge -p '{"metadata":{"finalizers":null}}'
 ```

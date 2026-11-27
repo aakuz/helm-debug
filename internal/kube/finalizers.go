@@ -34,8 +34,14 @@ func ExplainFinalizer(name string) Finalizer {
 }
 
 // ControllerHint is the word a controller's Deployment name usually starts with: the first DNS label of the
-// prefix that is not "finalizer"/"finalizers" and does not end in "-finalizer".
+// prefix that is not "finalizer"/"finalizers" and does not end in "-finalizer". It is "" for the built-in Kubernetes
+// controllers (kubernetes.io, k8s.io and their subdomains): they run in the control plane, not in a Deployment.
 func ControllerHint(controller string) string {
+	for _, d := range []string{"kubernetes.io", "k8s.io"} {
+		if controller == d || strings.HasSuffix(controller, "."+d) {
+			return ""
+		}
+	}
 	for _, l := range strings.Split(controller, ".") {
 		if l != "" && l != "finalizer" && l != "finalizers" && !strings.HasSuffix(l, "-finalizer") {
 			return l

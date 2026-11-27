@@ -36,7 +36,7 @@ type resourcesResult struct {
 	Resources []resourceRow `json:"resources"`
 	Fixes     []string      `json:"fixes,omitempty"`
 
-	FinalizerFixes   []string `json:"finalizerFixes,omitempty"`   // RemoveFinalizersCommand for every terminating row that has finalizers
+	FinalizerFixes   []string `json:"finalizerFixes,omitempty"`   // RemoveFinalizersCommand for every terminating row with a finalizer that is not well-known
 	DeploymentsError string   `json:"deploymentsError,omitempty"` // ListDeployments failed (e.g. Forbidden); controller check skipped
 }
 
@@ -138,13 +138,13 @@ func runResources(cmd *cobra.Command, o *Options, c *Clients, name string, revis
 			res.Fixes = append(res.Fixes, kube.AdoptCommands(r.Kind, r.Namespace, r.Name, rel.Name, rel.Namespace)...)
 		}
 	}
-	res.addControllers(cmd, c)
+	res.explainFinalizers(cmd, c)
 	return res, nil
 }
 
-// addControllers names the Deployments of the controllers behind the non-well-known finalizers and collects the
-// commands that clear the finalizers. Deployments are listed once, and only when some finalizer has a hint.
-func (res *resourcesResult) addControllers(cmd *cobra.Command, c *Clients) {
+// explainFinalizers both names the Deployments of the controllers behind the non-well-known finalizers and
+// collects the commands that clear them. Deployments are listed once, and only when some finalizer has a hint.
+func (res *resourcesResult) explainFinalizers(cmd *cobra.Command, c *Clients) {
 	var deployments []string
 	listed := false
 	for i := range res.Resources {
@@ -152,9 +152,12 @@ func (res *resourcesResult) addControllers(cmd *cobra.Command, c *Clients) {
 		if r.Deleted == nil || len(r.Finalizers) == 0 {
 			continue
 		}
-		res.FinalizerFixes = append(res.FinalizerFixes, kube.RemoveFinalizersCommand(r.Kind, r.Namespace, r.Name))
+		unknown := false
 		for j := range r.Finalizers {
 			f := &r.Finalizers[j]
+			if f.WaitsFor == "" {
+				unknown = true
+			}
 			hint := kube.ControllerHint(f.Controller)
 			if hint == "" {
 				continue
@@ -167,10 +170,13 @@ func (res *resourcesResult) addControllers(cmd *cobra.Command, c *Clients) {
 				}
 			}
 			for _, d := range deployments {
-				if _, name, _ := strings.Cut(d, "/"); strings.HasPrefix(name, hint) {
+				if _, name, _ := strings.Cut(d, "/"); name == hint || strings.HasPrefix(name, hint+"-") {
 					f.Deployments = append(f.Deployments, d)
 				}
 			}
+		}
+		if unknown {
+			res.FinalizerFixes = append(res.FinalizerFixes, kube.RemoveFinalizersCommand(r.Kind, r.Namespace, r.Name))
 		}
 	}
 }

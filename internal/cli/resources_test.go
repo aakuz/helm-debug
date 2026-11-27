@@ -203,8 +203,8 @@ func TestResourcesTerminatingJSON(t *testing.T) {
 		t.Errorf("Widget finalizer = %+v", f)
 	}
 
+	// The PVC is held only by a well-known finalizer, so it gets no patch command.
 	wantFixes := []string{
-		`kubectl -n prod patch PersistentVolumeClaim/data --type=merge -p '{"metadata":{"finalizers":null}}'`,
 		`kubectl -n prod patch Service/web --type=merge -p '{"metadata":{"finalizers":null}}'`,
 		`kubectl patch Widget/backend-widget --type=merge -p '{"metadata":{"finalizers":null}}'`,
 	}
@@ -215,28 +215,47 @@ func TestResourcesTerminatingJSON(t *testing.T) {
 
 func TestResourcesTerminatingHook(t *testing.T) {
 	t.Parallel()
-	hook := &rspb.Hook{
-		Name: "migrate", Kind: "Job", Path: "api/templates/migrate.yaml",
-		Events:   []rspb.HookEvent{rspb.HookPreUpgrade},
-		Manifest: "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: migrate\n",
+	hookCluster := func(t *testing.T, finalizers ...string) *cluster {
+		hook := &rspb.Hook{
+			Name: "migrate", Kind: "Job", Path: "api/templates/migrate.yaml",
+			Events:   []rspb.HookEvent{rspb.HookPreUpgrade},
+			Manifest: "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: migrate\n",
+		}
+		c := newCluster(t)
+		c.release("api", "prod", 1, common.StatusDeployed, "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n", hook)
+		c.object("apps/v1", "Deployment", "prod", "api", "api", "prod")
+		c.object("batch/v1", "Job", "prod", "migrate", "", "")
+		c.terminate(time.Hour, finalizers...)
+		return c
 	}
-	c := newCluster(t)
-	c.release("api", "prod", 1, common.StatusDeployed, "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n", hook)
-	c.object("apps/v1", "Deployment", "prod", "api", "api", "prod")
-	c.object("batch/v1", "Job", "prod", "migrate", "", "")
-	c.terminate(time.Hour, "foregroundDeletion")
 
-	out, err := run(t, c, "prod", "resources", "api")
-	wantProblems(t, err, false)
-	for _, want := range []string{
-		"terminating",
-		"Terminating objects:\n  Job prod/migrate: deletion requested 1h ago\n    foregroundDeletion: waits for: the garbage collector to delete the dependents that block owner deletion\n",
-		`  kubectl -n prod patch Job/migrate --type=merge -p '{"metadata":{"finalizers":null}}'`,
-	} {
+	t.Run("controller finalizer", func(t *testing.T) {
+		t.Parallel()
+		out, err := run(t, hookCluster(t, "example.com/cleanup"), "prod", "resources", "api")
+		wantProblems(t, err, false)
+		for _, want := range []string{
+			"terminating",
+			"Terminating objects:\n  Job prod/migrate: deletion requested 1h ago\n    example.com/cleanup: set by controller example.com; Deployments named example*: none - the controller may be uninstalled\n",
+			`  kubectl -n prod patch Job/migrate --type=merge -p '{"metadata":{"finalizers":null}}'`,
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("output lacks %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("only well-known finalizers", func(t *testing.T) {
+		t.Parallel()
+		out, err := run(t, hookCluster(t, "foregroundDeletion"), "prod", "resources", "api")
+		wantProblems(t, err, false)
+		want := "Terminating objects:\n  Job prod/migrate: deletion requested 1h ago\n    foregroundDeletion: waits for: the garbage collector to delete the dependents that block owner deletion\n"
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
-	}
+		if strings.Contains(out, "Clearing finalizers") || strings.Contains(out, "kubectl") {
+			t.Errorf("a row held only by well-known finalizers gets no patch command:\n%s", out)
+		}
+	})
 }
 
 func TestResourcesOnlyTerminating(t *testing.T) {
@@ -291,6 +310,8 @@ func TestResourcesDeploymentLookups(t *testing.T) {
 		{"no finalizers need no controller", nil, 0},
 		{"controller finalizer with no hint", []string{"finalizer/x"}, 0},
 		{"several controllers share one list", []string{"example.com/cleanup", "helm.toolkit.fluxcd.io/finalizer"}, 1},
+		{"built-in kubernetes domain needs no controller", []string{"service.kubernetes.io/load-balancer-cleanup"}, 0},
+		{"built-in k8s.io domain needs no controller", []string{"foo.k8s.io/cleanup"}, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -349,8 +370,69 @@ func TestResourcesDeploymentsForbidden(t *testing.T) {
 				}
 			}
 		}
-		if len(res.FinalizerFixes) != 3 {
+		if len(res.FinalizerFixes) != 2 {
 			t.Errorf("finalizerFixes = %q", res.FinalizerFixes)
 		}
 	})
+}
+
+func TestResourcesBuiltinControllerFinalizer(t *testing.T) {
+	t.Parallel()
+	c := newCluster(t)
+	c.release("app", "prod", 1, common.StatusDeployed, "apiVersion: v1\nkind: Service\nmetadata:\n  name: web\n")
+	c.object("v1", "Service", "prod", "web", "app", "prod")
+	c.terminate(time.Hour, "service.kubernetes.io/load-balancer-cleanup")
+	c.object("apps/v1", "Deployment", "kube-system", "service-controller", "", "")
+
+	out, err := run(t, c, "prod", "resources", "app")
+	wantProblems(t, err, true)
+	for _, want := range []string{
+		"    service.kubernetes.io/load-balancer-cleanup: set by controller service.kubernetes.io\n",
+		`  kubectl -n prod patch Service/web --type=merge -p '{"metadata":{"finalizers":null}}'`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Deployments named") {
+		t.Errorf("a built-in controller is not looked up among Deployments:\n%s", out)
+	}
+}
+
+func TestResourcesDeploymentMatching(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		deployments []string // "namespace/name" of live Deployments besides the release
+		want        []string
+	}{
+		{"hint followed by a dash", []string{"flux-system/helm-controller", "ci/helmfile-runner"}, []string{"flux-system/helm-controller"}},
+		{"name equal to the hint", []string{"tools/helm", "ci/helmfile-runner"}, []string{"tools/helm"}},
+		{"only a longer word", []string{"ci/helmfile-runner"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := newCluster(t)
+			c.release("app", "prod", 1, common.StatusDeployed, "apiVersion: v1\nkind: Service\nmetadata:\n  name: web\n")
+			c.object("v1", "Service", "prod", "web", "app", "prod")
+			c.terminate(time.Hour, "helm.toolkit.fluxcd.io/finalizer")
+			for _, d := range tt.deployments {
+				ns, name, _ := strings.Cut(d, "/")
+				c.object("apps/v1", "Deployment", ns, name, "", "")
+			}
+
+			out, err := run(t, c, "prod", "resources", "app", "-o", "json")
+			wantProblems(t, err, true)
+			res := decodeTerminating(t, out)
+			if len(res.Resources) != 1 || len(res.Resources[0].Finalizers) != 1 {
+				t.Fatalf("resources = %+v", res.Resources)
+			}
+			got := res.Resources[0].Finalizers[0].Deployments
+			slices.Sort(got)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("deployments = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }

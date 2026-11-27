@@ -55,6 +55,13 @@ func TestControllerHint(t *testing.T) {
 		{"", ""},
 		{"finalizer", ""},
 		{"finalizers.foo-finalizer", ""},
+		{"kubernetes.io", ""},
+		{"k8s.io", ""},
+		{"service.kubernetes.io", ""},
+		{"foo.k8s.io", ""},
+		{"customresourcecleanup.apiextensions.k8s.io", ""},
+		{"notkubernetes.io", "notkubernetes"},
+		{"k8s.io.example.com", "k8s"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.controller, func(t *testing.T) {
