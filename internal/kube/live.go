@@ -26,6 +26,7 @@ const (
 const (
 	StatusPresent     = "present"
 	StatusAbsent      = "absent"
+	StatusTerminating = "terminating"
 	StatusUnknownKind = "unknown-kind"
 	StatusError       = "error"
 )
