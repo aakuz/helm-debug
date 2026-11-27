@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -153,7 +154,8 @@ func crdSources(manifest string, ch *chart.Chart) ([]crdSource, error) {
 	}
 	if ch != nil {
 		for _, crd := range ch.CRDObjects() {
-			if err := add(string(crd.File.Data), crd.Filename); err != nil {
+			// Filename is built with filepath.Join; a chart path reads the same on every OS.
+			if err := add(string(crd.File.Data), filepath.ToSlash(crd.Filename)); err != nil {
 				return nil, err
 			}
 		}
