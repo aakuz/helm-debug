@@ -1,0 +1,24 @@
+Release prod/api revision 3
+
+NAME                 SOURCE                 STATUS    CHART VERSIONS  CLUSTER VERSIONS  STORED      CONVERSION
+certs.example.com    api/crds/certs.yaml    in-sync   v1*             v1*               v1          Webhook cert-manager/cert-manager-webhook
+gadgets.example.com  api/crds/gadgets.yaml  in-sync   (v1beta1),v1*   (v1beta1),v1*     v1beta1,v1  None
+things.example.com   templates              absent    v1*             -                 -           -
+widgets.example.com  api/crds/widgets.yaml  outdated  v1,v2*          v1*               v1          None
+
+* storage version, (v) not served
+
+--- CustomResourceDefinition widgets.example.com (outdated)
+@@ -10,10 +10,4 @@
+       openAPIV3Schema:
+         type: object
+     served: true
+-    storage: false
+-  - name: v2
+-    schema:
+-      openAPIV3Schema:
+-        type: object
+-    served: true
+     storage: true
+
+note: widgets.example.com: storage version is v1 in the cluster, v2 in the chart

@@ -146,7 +146,7 @@ check `stuck` (it suggests a rollback to the last good revision) and back up the
 | 140 | Why can a rollback fail? | 🟡 `history` (reason); immutable fields: #50; removed APIs: `deprecated --revision N` |
 | 141 | Blocked by an immutable field? | 🔧 #50 |
 | 142–143 | Rollback after a Kubernetes upgrade; old manifest with a removed API? | ✅ `deprecated REL --revision N` |
-| 144 | Rollback brings back an old CRD? | 🔧 #48 (CRDs in `crds/` are not touched by rollback) |
+| 144 | Rollback brings back an old CRD? | ✅ `crds REL --revision N` (CRDs in `crds/` are not touched by rollback) |
 | 145 | Debugging `pending-rollback`? | ✅ `stuck`, `history` |
 | 146 | Rollback created part of the objects and failed? | ✅ `resources REL`, `drift REL` |
 | 147 | `--cleanup-on-fail`? | ➖ Helm flag; `lost-found` finds objects left behind otherwise |
@@ -189,7 +189,7 @@ check `stuck` (it suggests a rollback to the last good revision) and back up the
 | 221 | Why does Kubernetes reject a manifest Helm rendered? | 🟡 `history` holds the API error; `resources` shows unknown kinds |
 | 222–224 | `no matches for kind`, `resource mapping not found`, `could not find the requested resource`? | ✅ `resources REL` (`unknown-kind` with the error), `deprecated REL` |
 | 225–226 | Is an API resource / version available? | ✅ `deprecated REL` (`not-served` against the connected cluster); `kubectl api-resources` |
-| 227 | Custom resource before its CRD exists? | ✅ `resources` reports `unknown-kind`; CRD checks: #48 |
+| 227 | Custom resource before its CRD exists? | ✅ `resources` reports `unknown-kind`; CRD checks: `crds REL` |
 | 228–231 | Admission rejection, which webhook, mutation? | 🔧 #57 |
 | 232–233 | Why does the installed manifest differ from the live object; SSA/managedFields? | ✅ `drift` compares declared fields only and ignores managedFields and defaults |
 | 234–237 | Gatekeeper/Kyverno, Pod Security Admission? | 🟡 `health` shows `FailedCreate` events from PSA; webhook list: #57 |
@@ -235,12 +235,12 @@ check `stuck` (it suggests a rollback to the last good revision) and back up the
 
 | # | Question | Answer with helm-debug |
 |---|---|---|
-| 297–301 | How Helm installs CRDs, `crds/` vs templates, order, why upgrades do not update them? | ➖ Helm concept; see #48 |
-| 302–304 | Is the cluster CRD outdated; controller expects missing fields; compare chart vs cluster CRD? | 🔧 #48 |
+| 297–301 | How Helm installs CRDs, `crds/` vs templates, order, why upgrades do not update them? | ➖ Helm concept; see `crds` |
+| 302–304 | Is the cluster CRD outdated; controller expects missing fields; compare chart vs cluster CRD? | ✅ `crds REL` (spec diff per CRD) |
 | 305–306 | Who manages the CRD lifecycle; separate chart? | ➖ design decision |
 | 307–311 | `--skip-crds`, uninstall and CRDs, what happens to custom resources? | ➖ Helm never deletes CRDs from `crds/`; `lost-found` finds leftovers |
-| 312–314 | CRD migration, conversion webhook, storage version migration? | 🔧 #48 (stored versions, conversion webhook) |
-| 315 | `no matches for kind` although the CRD is in the chart? | ✅ `resources` (`unknown-kind`); version mismatch: #48 |
+| 312–314 | CRD migration, conversion webhook, storage version migration? | ✅ `crds REL` (stored versions, storage version, conversion webhook) |
+| 315 | `no matches for kind` although the CRD is in the chart? | ✅ `resources` (`unknown-kind`); version mismatch: `crds REL` |
 | 316–317 | Can a hook fix CRD ordering; `crd-install` hook? | ➖ Helm 2 history |
 
 ## 15. Dependencies and subcharts
@@ -405,7 +405,7 @@ The permissions helm-debug itself needs are listed in [README → RBAC](../READM
 | 534–539 | `valuesFrom` missing ConfigMap/Secret; HelmRepository/HelmChart/OCIRepository not Ready? | 🔧 #56 |
 | 540–541 | `dependsOn` blocking; dependency cycles? | 🔧 #56 |
 | 542–543 | Failed uninstall of a HelmRelease; disabling hooks for uninstall? | 🟡 `flux status`, `hooks`; finalizers: #49 |
-| 544 | CRD `Create`/`CreateReplace` policy? | 🔧 #48 shows the resulting CRD state |
+| 544 | CRD `Create`/`CreateReplace` policy? | ✅ `crds REL` shows the resulting CRD state |
 | 545–546 | Manual `helm upgrade` of a Flux release; next reconcile? | ✅ `history` shows the manual revision; `flux status` the reconciliation |
 
 ## 32. Argo CD and Helm
@@ -461,7 +461,7 @@ The permissions helm-debug itself needs are listed in [README → RBAC](../READM
 | 597 | Upgrade timed out, a minute later the Deployment is Ready? | ✅ `history` shows `failed`; `health` shows it healthy now |
 | 598 | CI died during an upgrade: safe next step? | ✅ `stuck` (revision, age, fix), `diff REL N-1 N` |
 | 599 | Rollback returns an immutable-field error? | 🔧 #50 |
-| 600 | CRD stayed old after upgrade: how to prove it? | 🔧 #48 |
+| 600 | CRD stayed old after upgrade: how to prove it? | ✅ `crds REL` |
 | 601 | Uninstall hangs for 30 minutes: first checks? | 🟡 `stuck` (#54 for `uninstalling`), `hooks`, `resources` (#49 for finalizers) |
 | 602 | pre-delete Job fails because a Secret is gone? | 🟡 `hooks REL`; logs: #47 |
 | 603 | Record shows a pending operation but no Helm process exists? | ✅ `stuck` |

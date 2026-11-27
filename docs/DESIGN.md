@@ -77,6 +77,14 @@ reveals more than the earlier path-only output, but still only reads (ADR-0003 i
 With `--show-secrets`, Secret values appear base64-encoded as stored (`stringData` is folded into `data`).
 In `--values` mode, absent objects and lookup errors are emitted as `# absent:` / `# error:` comments.
 
+## CRDs
+
+`crds` collects the CRD documents of the chart's `crds/` files and of the rendered manifest, and GETs
+each one from `apiextensions.k8s.io/v1` customresourcedefinitions (read-only). It compares spec only,
+with the same normalization as `drift` (the conversion webhook `caBundle` is ignored as well, since cert-manager injects it), because Helm never upgrades `crds/` and a stale CRD is the
+usual cause of controllers failing on fields they expect. Subchart `crds/` files are not included,
+since stored release records do not keep subcharts.
+
 ## Diff
 
 `diff RELEASE REV1 REV2` loads both revisions with `Store.Revision` and compares them without

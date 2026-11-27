@@ -186,16 +186,23 @@ func driftDetails(o *Options, row *driftRow, expected, live map[string]any) {
 	if secret {
 		maskSecret(want, got)
 	}
-	wantText, err := yaml.Marshal(want)
-	if err == nil {
-		var gotText []byte
-		if gotText, err = yaml.Marshal(got); err == nil {
-			row.Diff = unifiedDiff(string(wantText), string(gotText))
-		}
-	}
-	if err != nil {
+	var err error
+	if row.Diff, err = yamlDiff(want, got); err != nil {
 		row.Error = err.Error()
 	}
+}
+
+// yamlDiff renders a unified diff of two projected objects as YAML.
+func yamlDiff(want, got map[string]any) (string, error) {
+	wantText, err := yaml.Marshal(want)
+	if err != nil {
+		return "", err
+	}
+	gotText, err := yaml.Marshal(got)
+	if err != nil {
+		return "", err
+	}
+	return unifiedDiff(string(wantText), string(gotText)), nil
 }
 
 // liveValues builds nested maps holding the live value at every changed JSON

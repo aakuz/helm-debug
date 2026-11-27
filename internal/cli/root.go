@@ -219,6 +219,7 @@ func NewRootCommand(o *Options) *cobra.Command {
 		newVersionCommand(o),
 		newResourcesCommand(o),
 		newDriftCommand(o),
+		newCrdsCommand(o),
 		newDiffCommand(o),
 		newFindCommand(o),
 		newHistoryCommand(o),
