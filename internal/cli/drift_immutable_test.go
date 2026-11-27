@@ -89,7 +89,7 @@ func TestDriftImmutableSelectorTable(t *testing.T) {
 		}
 	}
 	header, table, diff := strings.Index(out, driftImmutableHeader), strings.Index(out, "STATUS"), strings.Index(out, "--- Deployment prod/api")
-	if diff < 0 || !(table < header && header < diff) {
+	if diff < 0 || table >= header || header >= diff {
 		t.Fatalf("immutable block must come after the table and before the diffs:\n%s", out)
 	}
 	if !strings.Contains(out, "\n\n"+driftImmutableHeader+"\n") {
