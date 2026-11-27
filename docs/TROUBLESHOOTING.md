@@ -67,7 +67,7 @@ check `stuck` (it suggests a rollback to the last good revision) and back up the
 | 27 | Installed chart version? | ✅ `list`, `history` (CHART column) |
 | 28 | appVersion? | ✅ `list`, `history` (APP VERSION column) |
 | 29 | Which Helm client version created the release? | ➖ Helm does not store it in the record |
-| 30 | Which Kubernetes object blocks a Helm operation? | 🟡 `resources` (absent, unknown kind, ownership), `health`, `hooks`; what `--wait` waits for: `health` (WAITING FOR line); finalizers: #49 |
+| 30 | Which Kubernetes object blocks a Helm operation? | 🟡 `resources` (absent, unknown kind, ownership), `health`, `hooks`; what `--wait` waits for: `health` (WAITING FOR line); finalizers: `resources` (`terminating`) |
 
 ## 2. Debugging approach
 
@@ -322,10 +322,10 @@ The permissions helm-debug itself needs are listed in [README → RBAC](../READM
 |---|---|---|
 | 431–434 | What uninstall does and deletes; history; `--keep-history`? | ➖ Helm concept; `history` shows `uninstalled` records |
 | 435–436 | `upgrade --install` after `--keep-history`; `has no deployed releases`? | 🔧 #54 |
-| 437–438 | `uninstalling`; why does uninstall hang? | 🔧 #54 (stuck uninstalling), #49 (finalizers) |
-| 439–442 | Finalizers, `deletionTimestamp`, when to remove a finalizer? | 🔧 #49 |
+| 437–438 | `uninstalling`; why does uninstall hang? | 🟡 `resources REL` shows objects still `terminating` and their finalizers; stuck `uninstalling`: #54 |
+| 439–442 | Finalizers, `deletionTimestamp`, when to remove a finalizer? | ✅ `resources REL` (`terminating`, deletion age, finalizers; prints the patch with a warning) |
 | 443–446 | pre/post-delete hooks, `--no-hooks`? | 🟡 `hooks REL`; logs: #47 |
-| 447–448 | `--wait` on uninstall; Namespace termination? | 🔧 #49 |
+| 447–448 | `--wait` on uninstall; Namespace termination? | 🟡 `resources REL` shows which objects of the release are `terminating` and why |
 | 449 | CRD deleted but the manifest holds custom resources? | ✅ `resources` (`unknown-kind`) |
 | 450–451 | Orphans after a failed uninstall; which objects belonged to the release? | ✅ `lost-found -A`, `manifests REL` |
 | 452 | `helm.sh/resource-policy: keep`? | ✅ `lost-found` finds kept objects whose release is gone |
@@ -335,7 +335,7 @@ The permissions helm-debug itself needs are listed in [README → RBAC](../READM
 
 | # | Question | Answer with helm-debug |
 |---|---|---|
-| 454–461 | What finalizers are, which controller owns one, risks of patching, dead operator, CRD finalizers, recovery order? | 🔧 #49 |
+| 454–461 | What finalizers are, which controller owns one, risks of patching, dead operator, CRD finalizers, recovery order? | 🟡 `resources REL` (what well-known finalizers wait for, controller prefix and its Deployments, printed patch with a warning); recovery order is up to you |
 
 ## 25. `helm.sh/resource-policy: keep`
 
@@ -404,7 +404,7 @@ The permissions helm-debug itself needs are listed in [README → RBAC](../READM
 | 530–533 | Install/upgrade remediation, rollback vs uninstall, `RetryOnFailure`? | 🔧 #56 (shows the configured remediation and what happens next) |
 | 534–539 | `valuesFrom` missing ConfigMap/Secret; HelmRepository/HelmChart/OCIRepository not Ready? | 🔧 #56 |
 | 540–541 | `dependsOn` blocking; dependency cycles? | 🔧 #56 |
-| 542–543 | Failed uninstall of a HelmRelease; disabling hooks for uninstall? | 🟡 `flux status`, `hooks`; finalizers: #49 |
+| 542–543 | Failed uninstall of a HelmRelease; disabling hooks for uninstall? | 🟡 `flux status`, `hooks`; finalizers: `resources` (`terminating`) |
 | 544 | CRD `Create`/`CreateReplace` policy? | ✅ `crds REL` shows the resulting CRD state |
 | 545–546 | Manual `helm upgrade` of a Flux release; next reconcile? | ✅ `history` shows the manual revision; `flux status` the reconciliation |
 
@@ -462,7 +462,7 @@ The permissions helm-debug itself needs are listed in [README → RBAC](../READM
 | 598 | CI died during an upgrade: safe next step? | ✅ `stuck` (revision, age, fix), `diff REL N-1 N` |
 | 599 | Rollback returns an immutable-field error? | 🔧 #50 |
 | 600 | CRD stayed old after upgrade: how to prove it? | ✅ `crds REL` |
-| 601 | Uninstall hangs for 30 minutes: first checks? | 🟡 `stuck` (#54 for `uninstalling`), `hooks`, `resources` (#49 for finalizers) |
+| 601 | Uninstall hangs for 30 minutes: first checks? | 🟡 `stuck` (#54 for `uninstalling`), `hooks`, `resources` (`terminating` objects and their finalizers) |
 | 602 | pre-delete Job fails because a Secret is gone? | 🟡 `hooks REL`; logs: #47 |
 | 603 | Record shows a pending operation but no Helm process exists? | ✅ `stuck` |
 | 604 | Old API removed after a Kubernetes upgrade? | ✅ `deprecated REL`; fix with `helm-mapkubeapis` |
@@ -475,7 +475,7 @@ The permissions helm-debug itself needs are listed in [README → RBAC](../READM
 | 612–613 | Live object right, pod spec old; StatefulSet does not update pods? | ✅ `health` (StatefulSet partition, `OnDelete`); images per pod: #53 |
 | 614 | New ReplicaSet never becomes Ready: is Helm to blame? | ✅ `health REL --logs 50` |
 | 615 | Timeout only in prod: cluster differences? | 🔧 #26 (compare contexts), #46 |
-| 616 | Chart stopped uninstalling after a Kubernetes upgrade? | 🟡 `deprecated REL`; finalizers: #49 |
+| 616 | Chart stopped uninstalling after a Kubernetes upgrade? | 🟡 `deprecated REL`; finalizers: `resources` (`terminating`) |
 | 617 | Install hangs only with `--wait`? | 🟡 the blocker is readiness, not the API: `health` (WAITING FOR line) |
 | 618 | `--atomic` removes the failed release: how to keep evidence? | 🔧 #55 |
 | 619 | Post-mortem without CI logs? | ✅ `history` (reasons), `diff`, `drift`; a timeline of all releases, newest first: `history -A --since 24h` |

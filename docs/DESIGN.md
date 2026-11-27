@@ -113,6 +113,13 @@ Hooks are not checked: Helm doesn't put this metadata on them.
 `find` uses the same annotations as a fast path. It reads the live object, then verifies that the
 annotated release really declares it, and falls back to a storage scan if it doesn't.
 
+## Terminating objects
+
+`resources` sets the `terminating` status when an object has `metadata.deletionTimestamp`, and reads
+its finalizers from the same object. The status is not set in `kube.Cluster.Get`, because other
+commands rely on `Live.Status` being `present` or `absent` to decide whether an object exists. The
+finalizer patch is only printed, since the tool is read-only (ADR-0003).
+
 ## Stuck releases
 
 The latest revision of a release has status `pending-*`, and it became pending more than

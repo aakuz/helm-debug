@@ -1,0 +1,22 @@
+Release prod/app revision 1 (deployed)
+
+KIND                   NAMESPACE  NAME            HOOK  STATUS       OWNERSHIP
+ConfigMap              prod       config          -     present      ok
+Deployment             prod       api             -     terminating  ok
+PersistentVolumeClaim  prod       data            -     terminating  ok
+Service                prod       web             -     terminating  ok
+Widget                 -          backend-widget  -     terminating  ok
+
+Terminating objects:
+  Deployment prod/api: deletion requested 10m ago
+    (no finalizers - waiting for the API server or the garbage collector)
+  PersistentVolumeClaim prod/data: deletion requested 3h ago
+    kubernetes.io/pvc-protection: waits for: no Pod to use the PersistentVolumeClaim any more
+  Service prod/web: deletion requested 5m ago
+    helm.toolkit.fluxcd.io/finalizer: set by controller helm.toolkit.fluxcd.io; Deployments named helm*: flux-system/helm-controller
+  Widget backend-widget: deletion requested 2d ago
+    example.com/cleanup: set by controller example.com; Deployments named example*: none - the controller may be uninstalled
+
+Clearing finalizers (last resort - removing a finalizer skips the controller's cleanup; first check that the controller is gone):
+  kubectl -n prod patch Service/web --type=merge -p '{"metadata":{"finalizers":null}}'
+  kubectl patch Widget/backend-widget --type=merge -p '{"metadata":{"finalizers":null}}'

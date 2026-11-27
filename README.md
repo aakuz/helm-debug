@@ -155,6 +155,41 @@ Suggested fixes (let Helm adopt the objects):
 `--revision N` inspects an older revision. Hooks are listed, but their absence is not treated as a
 problem because hooks are usually deleted by their delete policy.
 
+Objects with a `deletionTimestamp` are shown as `terminating`. Below the table, a `Terminating objects:`
+block explains the finalizers each one still carries: well-known ones say what they wait for, others
+name the controller and the Deployments that run it (finalizers of built-in
+`kubernetes.io`/`k8s.io` controllers are not looked up). A `Clearing finalizers` block prints (never runs)
+the `kubectl patch` commands that remove them, with a warning that this skips the controller's cleanup;
+objects held only by well-known finalizers get none, since the fix is to resolve what they wait for.
+Terminating objects make the exit code 2, except hooks. Listing Deployments needs optional `list` on
+`deployments.apps` in all namespaces; without it the line says `not checked` and the command still succeeds.
+
+```console
+$ helm-debug resources app -n prod
+Release prod/app revision 1 (deployed)
+
+KIND                   NAMESPACE  NAME            HOOK  STATUS       OWNERSHIP
+ConfigMap              prod       config          -     present      ok
+Deployment             prod       api             -     terminating  ok
+PersistentVolumeClaim  prod       data            -     terminating  ok
+Service                prod       web             -     terminating  ok
+Widget                 -          backend-widget  -     terminating  ok
+
+Terminating objects:
+  Deployment prod/api: deletion requested 10m ago
+    (no finalizers - waiting for the API server or the garbage collector)
+  PersistentVolumeClaim prod/data: deletion requested 3h ago
+    kubernetes.io/pvc-protection: waits for: no Pod to use the PersistentVolumeClaim any more
+  Service prod/web: deletion requested 5m ago
+    helm.toolkit.fluxcd.io/finalizer: set by controller helm.toolkit.fluxcd.io; Deployments named helm*: flux-system/helm-controller
+  Widget backend-widget: deletion requested 2d ago
+    example.com/cleanup: set by controller example.com; Deployments named example*: none - the controller may be uninstalled
+
+Clearing finalizers (last resort - removing a finalizer skips the controller's cleanup; first check that the controller is gone):
+  kubectl -n prod patch Service/web --type=merge -p '{"metadata":{"finalizers":null}}'
+  kubectl patch Widget/backend-widget --type=merge -p '{"metadata":{"finalizers":null}}'
+```
+
 ### drift
 
 ```console
@@ -813,13 +848,13 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 |---|---|
 | 0 | No problems (`diff` always exits 0 when it succeeds) |
 | 1 | Execution error (no access, release not found, bad flags, …) |
-| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), absent or outdated CRDs (`crds`), object not declared by any release (`find`), latest revision failed/pending (`history`, also any release in its timeline), stuck releases (`stuck`), records Helm cannot see (`storage`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), problem release status, workload not rolled out or problem pods, or `--wait` timed out (`health`), HelmRelease not Ready or its latest revision failed/pending or no records (`flux status`), Application not Synced/Healthy or a tracked object out of sync, degraded, absent or not tracked (`argo resources`), releases that need cleanup (`audit`), problems found in a chart (`lint`) |
+| 2 | Problems found: absent or terminating object or broken ownership (`resources`), drift (`drift`), absent or outdated CRDs (`crds`), object not declared by any release (`find`), latest revision failed/pending (`history`, also any release in its timeline), stuck releases (`stuck`), records Helm cannot see (`storage`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), problem release status, workload not rolled out or problem pods, or `--wait` timed out (`health`), HelmRelease not Ready or its latest revision failed/pending or no records (`flux status`), Application not Synced/Healthy or a tracked object out of sync, degraded, absent or not tracked (`argo resources`), releases that need cleanup (`audit`), problems found in a chart (`lint`) |
 
 ## RBAC
 
 | Command | Needs |
 |---|---|
-| `resources` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on every declared object |
+| `resources` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on every declared object, `list` on deployments.apps in all namespaces (optional, to check finalizer controllers) |
 | `drift` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on every declared object |
 | `crds` | `list` on secrets (or configmaps) in the release namespace, `get` on the CustomResourceDefinitions |
 | `diff` | `list` on secrets (or configmaps) in the release namespace |
