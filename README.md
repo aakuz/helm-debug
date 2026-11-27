@@ -11,6 +11,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`resources`** – which objects a release revision declares (hooks included), whether they exist
   and whether they carry the ownership metadata Helm needs to manage them.
 - **`drift`** – which declared fields differ between the latest stored manifest and live objects.
+- **`crds`** – CRDs a release revision ships compared with the cluster, since Helm never upgrades `crds/`.
 - **`diff`** – rendered manifest and user-values differences between two revisions.
 - **`find`** – which release(s) declare a given object.
 - **`history`** – revisions with status, chart/app version and the stored failure reason; without a release name, a newest-first timeline of all releases in a namespace or the cluster.
@@ -202,6 +203,51 @@ commonly deletes them after execution. This compares stored intent, not a newly 
 
 Exit code is 0 when in sync, 2 for drift, and 1 for lookup or manifest errors (including unknown
 kinds). An execution error takes precedence over drift when both occur.
+
+### crds
+
+```console
+$ helm-debug crds api -n prod
+Release prod/api revision 3
+
+NAME                 SOURCE                 STATUS    CHART VERSIONS  CLUSTER VERSIONS  STORED      CONVERSION
+certs.example.com    api/crds/certs.yaml    in-sync   v1*             v1*               v1          Webhook cert-manager/cert-manager-webhook
+gadgets.example.com  api/crds/gadgets.yaml  in-sync   (v1beta1),v1*   (v1beta1),v1*     v1beta1,v1  None
+things.example.com   templates              absent    v1*             -                 -           -
+widgets.example.com  api/crds/widgets.yaml  outdated  v1,v2*          v1*               v1          None
+
+* storage version, (v) not served
+
+--- CustomResourceDefinition widgets.example.com (outdated)
+@@ -10,10 +10,4 @@
+       openAPIV3Schema:
+         type: object
+     served: true
+-    storage: false
+-  - name: v2
+-    schema:
+-      openAPIV3Schema:
+-        type: object
+-    served: true
+     storage: true
+
+note: widgets.example.com: storage version is v1 in the cluster, v2 in the chart
+```
+
+Helm installs the files under a chart's `crds/` directory only on first install and never upgrades
+them, so after a chart upgrade the cluster CRD can lack fields or versions the controller expects.
+This compares the CRDs of a release revision (from `crds/` and from `templates/`) with the cluster,
+by spec only, as `drift` does. Each CRD is `in-sync`, `outdated` (followed by a diff of the chart's
+and the cluster's spec), `absent` (not in the cluster) or `error` (lookup failed). The table shows the
+versions on both sides (`*` marks the storage version, parentheses a version that is not served), the
+versions stored objects were written in, and the conversion strategy.
+
+Notes cover two things a spec diff does not make obvious: a stored version the chart's CRD drops (the
+API server rejects the CRD until the objects are migrated and the version is removed from
+`status.storedVersions`), and a storage version that differs between cluster and chart. Notes do not
+change the exit code. `--revision N` inspects an older revision (default latest); `-o json` and
+`-o yaml` return the same data. Subchart `crds/` files are not checked, because stored release records
+do not keep subcharts. Exits with 2 when a CRD is absent or outdated and 1 on lookup errors.
 
 ### diff
 
@@ -767,7 +813,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 |---|---|
 | 0 | No problems (`diff` always exits 0 when it succeeds) |
 | 1 | Execution error (no access, release not found, bad flags, …) |
-| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), object not declared by any release (`find`), latest revision failed/pending (`history`, also any release in its timeline), stuck releases (`stuck`), records Helm cannot see (`storage`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), problem release status, workload not rolled out or problem pods, or `--wait` timed out (`health`), HelmRelease not Ready or its latest revision failed/pending or no records (`flux status`), Application not Synced/Healthy or a tracked object out of sync, degraded, absent or not tracked (`argo resources`), releases that need cleanup (`audit`), problems found in a chart (`lint`) |
+| 2 | Problems found: absent object or broken ownership (`resources`), drift (`drift`), absent or outdated CRDs (`crds`), object not declared by any release (`find`), latest revision failed/pending (`history`, also any release in its timeline), stuck releases (`stuck`), records Helm cannot see (`storage`), lost resources (`lost-found`), removed or deprecated apiVersions (`deprecated`), orphaned hook objects (`hooks`), problem release status, workload not rolled out or problem pods, or `--wait` timed out (`health`), HelmRelease not Ready or its latest revision failed/pending or no records (`flux status`), Application not Synced/Healthy or a tracked object out of sync, degraded, absent or not tracked (`argo resources`), releases that need cleanup (`audit`), problems found in a chart (`lint`) |
 
 ## RBAC
 
@@ -775,6 +821,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 |---|---|
 | `resources` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on every declared object |
 | `drift` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on every declared object |
+| `crds` | `list` on secrets (or configmaps) in the release namespace, `get` on the CustomResourceDefinitions |
 | `diff` | `list` on secrets (or configmaps) in the release namespace |
 | `history` | `list` on secrets (or configmaps) in the release namespace; the timeline (no release name) needs `list` + `get` there, or cluster-wide with `-A` |
 | `values` | `list` on secrets (or configmaps) in the release namespace |

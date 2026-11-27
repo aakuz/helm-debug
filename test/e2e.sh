@@ -106,6 +106,7 @@ done
 expect 1 "$BIN" manifests demo -n "$NS" --revision 99
 expect 0 "$BIN" notes demo -n "$NS"
 expect 1 "$BIN" notes demo -n "$NS" --revision 99
+expect_out 0 'ships no CRDs' "$BIN" crds demo -n "$NS"
 expect_out 0 'No records Helm cannot see' "$BIN" storage demo -n "$NS"
 expect 1 "$BIN" storage nope -n "$NS"
 # A leftover record under the next key without Helm's labels is what makes `helm upgrade` fail with "release: already exists".

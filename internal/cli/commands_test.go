@@ -307,7 +307,7 @@ func TestFindClientsError(t *testing.T) {
 	o.NewClients = func(*Options) (*Clients, error) { return nil, errors.New("no cluster") }
 	cmd := NewRootCommand(o)
 	for _, args := range [][]string{
-		{"find", "configmap/x"}, {"history", "x"}, {"stuck"}, {"diff", "x", "1", "2"}, {"resources", "x"}, {"drift", "x"},
+		{"find", "configmap/x"}, {"history", "x"}, {"stuck"}, {"diff", "x", "1", "2"}, {"resources", "x"}, {"drift", "x"}, {"crds", "x"},
 	} {
 		cmd.SetArgs(args)
 		if err := cmd.Execute(); err == nil || err.Error() != "no cluster" {
