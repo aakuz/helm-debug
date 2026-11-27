@@ -237,7 +237,7 @@ note: widgets.example.com: storage version is v1 in the cluster, v2 in the chart
 Helm installs the files under a chart's `crds/` directory only on first install and never upgrades
 them, so after a chart upgrade the cluster CRD can lack fields or versions the controller expects.
 This compares the CRDs of a release revision (from `crds/` and from `templates/`) with the cluster,
-by spec only, as `drift` does. Each CRD is `in-sync`, `outdated` (followed by a diff of the chart's
+by spec only, as `drift` does (the conversion webhook `caBundle` is ignored as well). Each CRD is `in-sync`, `outdated` (followed by a diff of the chart's
 and the cluster's spec), `absent` (not in the cluster) or `error` (lookup failed). The table shows the
 versions on both sides (`*` marks the storage version, parentheses a version that is not served), the
 versions stored objects were written in, and the conversion strategy.

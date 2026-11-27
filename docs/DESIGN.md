@@ -81,7 +81,7 @@ In `--values` mode, absent objects and lookup errors are emitted as `# absent:` 
 
 `crds` collects the CRD documents of the chart's `crds/` files and of the rendered manifest, and GETs
 each one from `apiextensions.k8s.io/v1` customresourcedefinitions (read-only). It compares spec only,
-with the same normalization as `drift`, because Helm never upgrades `crds/` and a stale CRD is the
+with the same normalization as `drift` (the conversion webhook `caBundle` is ignored as well, since cert-manager injects it), because Helm never upgrades `crds/` and a stale CRD is the
 usual cause of controllers failing on fields they expect. Subchart `crds/` files are not included,
 since stored release records do not keep subcharts.
 

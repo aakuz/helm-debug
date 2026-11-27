@@ -11,6 +11,7 @@ import (
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
 
@@ -66,7 +67,8 @@ the cluster. Helm installs the files under a chart's crds/ directory once and
 never upgrades or deletes them, so they silently fall behind the chart. CRDs
 rendered from templates/ are included too.
 Only spec is compared, as in drift: metadata, status and live-only fields (API
-defaults such as conversion.strategy) are ignored. Each outdated CRD is
+defaults such as conversion.strategy) are ignored. The conversion webhook
+caBundle is ignored as well. Each outdated CRD is
 followed by a unified diff of the chart's (expected) and the cluster's spec.
 The table lists the versions of both sides ("*" marks the storage version, a
 version in parentheses is not served), the versions the API server stored
@@ -186,21 +188,19 @@ func crdCompare(cmd *cobra.Command, c *Clients, src crdSource) crdRow {
 		}
 	}
 	// Both sides are wrapped so that paths read /spec/..., as in drift.
-	expected := map[string]any{"spec": src.obj.Object["spec"]}
-	actual := map[string]any{"spec": live.Object.Object["spec"]}
+	expected := map[string]any{"spec": runtime.DeepCopyJSONValue(src.obj.Object["spec"])}
+	actual := map[string]any{"spec": runtime.DeepCopyJSONValue(live.Object.Object["spec"])}
+	// Charts ship a placeholder caBundle that cert-manager's cainjector overwrites.
+	for _, side := range []map[string]any{expected, actual} {
+		unstructured.RemoveNestedField(side, "spec", "conversion", "webhook", "clientConfig", "caBundle")
+	}
 	row.Changes = kube.ChangedPaths(expected, actual)
 	row.Status = "in-sync"
 	if len(row.Changes) > 0 {
 		row.Status = "outdated"
 		want, got := kube.Project(expected, actual)
-		wantText, err := yaml.Marshal(want)
-		if err == nil {
-			var gotText []byte
-			if gotText, err = yaml.Marshal(got); err == nil {
-				row.Diff = unifiedDiff(string(wantText), string(gotText))
-			}
-		}
-		if err != nil {
+		var err error
+		if row.Diff, err = yamlDiff(want, got); err != nil {
 			row.Error = err.Error()
 		}
 	}
@@ -216,8 +216,8 @@ func crdNotes(row crdRow) []string {
 			notes = append(notes, fmt.Sprintf("storedVersions has %s, which the chart's CRD drops: the API server rejects the CRD until stored objects are migrated and %s is removed from status.storedVersions", v, v))
 		}
 	}
-	if chart, live := storageVersion(row.ChartVersions), storageVersion(row.ClusterVersions); chart != live {
-		notes = append(notes, fmt.Sprintf("storage version is %s in the cluster, %s in the chart", live, chart))
+	if chartStorage, liveStorage := storageVersion(row.ChartVersions), storageVersion(row.ClusterVersions); chartStorage != liveStorage {
+		notes = append(notes, fmt.Sprintf("storage version is %s in the cluster, %s in the chart", liveStorage, chartStorage))
 	}
 	return notes
 }

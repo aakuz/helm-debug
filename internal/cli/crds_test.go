@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -309,6 +310,63 @@ func TestCrdsConversionWebhook(t *testing.T) {
 			wantProblems(t, err, false)
 			if !strings.Contains(out, "Webhook "+tt.want) {
 				t.Errorf("table lacks the webhook:\n%s", out)
+			}
+		})
+	}
+}
+
+// Charts often ship a placeholder caBundle that cert-manager's cainjector
+// overwrites in the cluster, so a different caBundle alone is not drift.
+func TestCrdsConversionCABundleIgnored(t *testing.T) {
+	t.Parallel()
+	chartCRD := crdYAML("widgets", "v1*") + `  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          namespace: cert-manager
+          name: cert-manager-webhook
+        caBundle: Cg==
+      conversionReviewVersions: ["v1"]
+`
+	tests := []struct {
+		name        string
+		liveService string
+		problems    bool
+		want        string
+	}{
+		{"only caBundle differs", "cert-manager-webhook", false, "in-sync"},
+		{"service name differs", "other-webhook", true, "outdated"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			c := newCluster(t)
+			crdRelease(t, c, 1, "", crdFile("widgets.yaml", chartCRD))
+			liveCRD(t, c, crdYAML("widgets", "v1*"), map[string]any{
+				"strategy": "Webhook",
+				"webhook": map[string]any{
+					"clientConfig": map[string]any{
+						"service":  map[string]any{"namespace": "cert-manager", "name": tt.liveService},
+						"caBundle": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCg==",
+					},
+					"conversionReviewVersions": []any{"v1"},
+				},
+			}, "v1")
+			res, err := crdsReport(t, c)
+			row := oneCRD(t, res)
+			if row.Status != tt.want {
+				t.Fatalf("status = %q, want %q; changes = %v\n%s", row.Status, tt.want, row.Changes, row.Diff)
+			}
+			wantProblems(t, err, tt.problems)
+			if tt.problems {
+				if !slices.Contains(row.Changes, "/spec/conversion/webhook/clientConfig/service/name") {
+					t.Errorf("changes lack the service name: %v", row.Changes)
+				}
+				return
+			}
+			if len(row.Changes) != 0 || row.Diff != "" {
+				t.Errorf("unexpected changes: %v\n%s", row.Changes, row.Diff)
 			}
 		})
 	}
