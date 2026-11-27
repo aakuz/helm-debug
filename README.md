@@ -17,7 +17,7 @@ without running Helm operations and without changing anything in the cluster.
 - **`stuck`** – releases stuck in `pending-install/upgrade/rollback` and the command that unlocks them.
 - **`health`** – readiness of the objects `helm --wait` waits for (workloads, Pods, PVCs, LoadBalancer Services, and Jobs with `--wait-for-jobs`), what is still waiting, crashing pods and recent warning events.
 - **`lost-found`** – objects that claim a Helm release which no longer exists in the cluster.
-- **`hooks`** – hooks of a release revision (event, weight, delete policy, last run) and leftover hook Jobs and Pods.
+- **`hooks`** – hooks of a release revision (event, weight, delete policy, last run), leftover hook Jobs and Pods, running hooks, warning events and logs of hook pods.
 - **`list`** – releases with their latest revision, status and chart, like `helm list`.
 - **`audit`** – revision counts and record sizes per release, and releases whose objects are all gone from the cluster.
 - **`values`** – user-supplied or computed values of a release revision, as a values file.
@@ -329,18 +329,33 @@ redirected.
 ### hooks
 
 ```console
-$ helm-debug hooks backend -n prod
+$ helm-debug hooks backend -n prod --logs 5
 Release prod/backend revision 2
 
-NAME             KIND  EVENT        WEIGHT  DELETE-POLICY   PHASE      LAST RUN  STATUS
-backend-migrate  Job   pre-upgrade  5       hook-succeeded  Succeeded  1h ago    orphan
+NAME             KIND  EVENT        WEIGHT  DELETE-POLICY   PHASE    LAST RUN  STATUS   DETAILS
+backend-migrate  Job   pre-upgrade  5       hook-succeeded  Running  2m ago    running  active 1, failed 2
 
-warning: 1 hook object(s) outlived their delete policy
+Warning events (last hour):
+LAST SEEN  OBJECT                     REASON   COUNT  MESSAGE
+30s        Pod/backend-migrate-x7k2p  BackOff  4      Back-off restarting failed container migrate
+
+Logs of backend-migrate-x7k2p (container migrate):
+  running migrations
+  error: relation "users" already exists
 ```
 
 `--revision N` inspects an older revision. A hook Job or Pod is an orphan when it still exists although
 its last run finished and its delete policy (`hook-succeeded` or `hook-failed`) asks for removal after
 that outcome. Objects kept by policy or by Helm's default `before-hook-creation` are not orphans.
+
+A hook Job or Pod that has not finished has status `running`: it is the hook Helm is waiting on. DETAILS
+shows the active and failed pod counts of a hook Job. Warning events of the last hour about the hook Jobs,
+their pods and hook Pods are listed, as in `health`. `--logs N` prints the last N log lines of every
+started container of the hook pods (previous run for a restarted container), with the same output as
+`health --logs`. When a hook object is absent, DETAILS says whether its delete policy explains it: removed
+by `hook-succeeded` after success or `hook-failed` after failure, the hook has not run, or not explained
+(`before-hook-creation` only deletes it when the hook runs again). Running or failed hooks, events and
+absent objects do not change the exit code; it is 2 only for orphans or lookup errors.
 
 ### values
 
@@ -771,7 +786,7 @@ Colors are enabled only when stdout is a terminal and disabled when `NO_COLOR` i
 | `find` | `get` on the object; `list` + `get` on secrets (or configmaps) cluster-wide for the scan |
 | `stuck` | `list` + `get` on secrets (or configmaps) in the namespace, or cluster-wide with `-A` |
 | `lost-found` | `list` on secrets (or configmaps) cluster-wide, `list` on every kind (metadata only) in the namespace, or cluster-wide with `-A`, plus API discovery |
-| `hooks` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the hook Jobs and Pods |
+| `hooks` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the hook Jobs and Pods, `list` on pods and events in their namespaces, `get` on `pods/log` with `--logs` |
 | `deprecated` | `get`/`list` on secrets (or configmaps) in the release namespace, API discovery (and `get` on `/version` unless `--target-version` is given) |
 | `audit` | `list` on secrets (or configmaps) in the namespace, or cluster-wide with `-A`, and `get` on the objects of every latest revision |
 | `health` | `get`/`list` on secrets (or configmaps) in the release namespace, `get` on the Deployments and StatefulSets, `list` on pods and events in their namespaces, `get` on `pods/log` with `--logs` or `--all-logs` |

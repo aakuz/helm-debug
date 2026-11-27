@@ -204,25 +204,29 @@ func hasLogs(res *healthResult) bool {
 // labelled as new.
 func printLogs(o *Options, w io.Writer, res *healthResult) {
 	for _, wl := range res.Workloads {
-		for _, l := range wl.Logs {
-			run := ""
-			if l.Previous {
-				run = ", previous run"
-			}
-			if l.more {
-				run += ", new lines"
-			}
-			fmt.Fprintf(w, "\nLogs of %s (container %s%s):\n", l.Pod, l.Container, run)
-			switch {
-			case l.Error != "":
-				fmt.Fprintf(w, "  %s unavailable: %s\n", o.paint("warning:", yellow), l.Error)
-			case len(l.Lines) == 0:
-				fmt.Fprintln(w, "  (no output)")
-			}
-			for _, line := range l.Lines {
-				fmt.Fprintln(w, "  "+line)
-			}
+		printPodLogs(o, w, wl.Logs)
+	}
+}
+
+// printPodLogs prints one "Logs of POD" block per container log.
+func printPodLogs(o *Options, w io.Writer, logs []podLog) {
+	for _, l := range logs {
+		run := ""
+		if l.Previous {
+			run = ", previous run"
+		}
+		if l.more {
+			run += ", new lines"
+		}
+		fmt.Fprintf(w, "\nLogs of %s (container %s%s):\n", l.Pod, l.Container, run)
+		switch {
+		case l.Error != "":
+			fmt.Fprintf(w, "  %s unavailable: %s\n", o.paint("warning:", yellow), l.Error)
+		case len(l.Lines) == 0:
+			fmt.Fprintln(w, "  (no output)")
+		}
+		for _, line := range l.Lines {
+			fmt.Fprintln(w, "  "+line)
 		}
 	}
-
 }

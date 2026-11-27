@@ -449,18 +449,13 @@ func runHealth(cmd *cobra.Command, o *Options, c *Clients, name string, opts hea
 			if selector == nil {
 				return
 			}
-			sel, err := metav1.LabelSelectorAsSelector(selector)
-			if err != nil {
-				w.Status, w.Message = kube.StatusError, "invalid selector: "+err.Error()
-				return
-			}
-			items, err := c.Cluster.ListPods(cmd.Context(), w.Namespace, sel.String())
+			items, err := selectorPods(cmd, c, w.Namespace, selector)
 			if err != nil {
 				w.Status = kube.StatusError
-				w.Message = strings.TrimPrefix(w.Message+"; listing pods: "+err.Error(), "; ")
+				w.Message = strings.TrimPrefix(w.Message+"; "+err.Error(), "; ")
 				return
 			}
-			pods[i] = podsFrom(items)
+			pods[i] = items
 		}
 		var targets []logTarget
 		for _, p := range pods[i] {
@@ -482,6 +477,19 @@ func runHealth(cmd *cobra.Command, o *Options, c *Clients, name string, opts hea
 	}
 	res.Events, res.EventsError = warningEvents(cmd, c, res.Workloads, pods, o.Now())
 	return res, nil
+}
+
+// selectorPods lists the pods a workload selector matches.
+func selectorPods(cmd *cobra.Command, c *Clients, namespace string, selector *metav1.LabelSelector) ([]corev1.Pod, error) {
+	sel, err := metav1.LabelSelectorAsSelector(selector)
+	if err != nil {
+		return nil, fmt.Errorf("invalid selector: %w", err)
+	}
+	items, err := c.Cluster.ListPods(cmd.Context(), namespace, sel.String())
+	if err != nil {
+		return nil, fmt.Errorf("listing pods: %w", err)
+	}
+	return podsFrom(items), nil
 }
 
 func podsFrom(items []unstructured.Unstructured) []corev1.Pod {
@@ -759,14 +767,19 @@ func printHealthState(o *Options, w io.Writer, res *healthResult) {
 		pods.flush()
 	}
 
-	if res.EventsError != "" {
-		fmt.Fprintf(w, "\n%s could not list events: %s\n", o.paint("warning:", yellow), res.EventsError)
+	printWarningEvents(o, w, res.Events, res.EventsError)
+}
+
+// printWarningEvents prints the warning events table, or the warning that they could not be listed.
+func printWarningEvents(o *Options, w io.Writer, events []healthEvent, eventsErr string) {
+	if eventsErr != "" {
+		fmt.Fprintf(w, "\n%s could not list events: %s\n", o.paint("warning:", yellow), eventsErr)
 	}
-	if len(res.Events) > 0 {
+	if len(events) > 0 {
 		fmt.Fprintln(w, "\nWarning events (last hour):")
 		et := newTable(w)
 		et.add("LAST SEEN", "OBJECT", "REASON", "COUNT", "MESSAGE")
-		for _, e := range res.Events {
+		for _, e := range events {
 			et.add(formatAge(o.Now().Sub(e.LastSeen)), e.Object, o.paint(e.Reason, yellow), fmt.Sprint(e.Count), e.Message)
 		}
 		et.flush()
