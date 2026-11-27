@@ -1,0 +1,67 @@
+Release prod/api revisions 1 -> 2
+
+Manifest:
+KIND         NAMESPACE  NAME     STATUS
+Deployment   prod       api      changed
+Job          prod       migrate  immutable
+Service      prod       db       immutable
+StatefulSet  prod       db       immutable
+
+Immutable fields (Kubernetes rejects the change in place: "field is immutable"):
+  Job prod/migrate: /spec/template
+    reference: https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/job-v1/#JobSpec
+    to apply it (not run): kubectl -n prod delete job/migrate
+      the next upgrade or rollback recreates it
+  Service prod/db: /spec/clusterIP
+    reference: https://kubernetes.io/docs/reference/kubernetes-api/service-resources/service-v1/#ServiceSpec
+    to apply it (not run): kubectl -n prod delete service/db
+      the next upgrade or rollback recreates it
+  StatefulSet prod/db: /spec/serviceName, /spec/volumeClaimTemplates
+    reference: https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/stateful-set-v1/#StatefulSetSpec
+    to apply it (not run): kubectl -n prod delete statefulset/db --cascade=orphan
+      keeps the Pods and PersistentVolumeClaims; the next upgrade or rollback recreates the StatefulSet and it adopts them
+
+--- Deployment prod/api (changed)
+@@ -4,4 +4,4 @@
+   name: api
+   namespace: prod
+ spec:
+-  replicas: 2
++  replicas: 3
+
+--- Job prod/migrate (immutable)
+@@ -7,5 +7,5 @@
+   template:
+     spec:
+       containers:
+-      - image: migrate:v1
++      - image: migrate:v2
+         name: migrate
+
+--- Service prod/db (immutable)
+@@ -4,5 +4,6 @@
+   name: db
+   namespace: prod
+ spec:
++  clusterIP: None
+   ports:
+   - port: 5432
+
+--- StatefulSet prod/db (immutable)
+@@ -5,11 +5,11 @@
+   namespace: prod
+ spec:
+   replicas: 1
+-  serviceName: db
++  serviceName: db-headless
+   volumeClaimTemplates:
+   - metadata:
+       name: data
+     spec:
+       resources:
+         requests:
+-          storage: 1Gi
++          storage: 5Gi
+
+Values:
+  No differences.

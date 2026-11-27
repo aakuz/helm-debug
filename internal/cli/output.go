@@ -132,7 +132,7 @@ func statusColor(status string) string {
 	switch status {
 	case "deployed", "present", "ok", "healthy", "in-sync", "added", "unchanged", "Synced", "Healthy":
 		return green
-	case "failed", "unhealthy", "absent", "error", "unknown-kind", "mismatch", "missing", "removed", "not-served", "OutOfSync", "Degraded", "Missing", "Failed":
+	case "failed", "unhealthy", "absent", "error", "unknown-kind", "mismatch", "missing", "removed", "not-served", "OutOfSync", "Degraded", "Missing", "Failed", "immutable":
 		return red
 	case "pending-install", "pending-upgrade", "pending-rollback", "uninstalling", "terminating", "drifted", "outdated", "changed", "deprecated", "Progressing", "Suspended":
 		return yellow

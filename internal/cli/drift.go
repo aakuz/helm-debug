@@ -22,6 +22,8 @@ type driftRow struct {
 	Diff    string   `json:"diff,omitempty"`
 	Error   string   `json:"error,omitempty"`
 
+	Immutable *kube.ImmutableChange `json:"immutable,omitempty"`
+
 	// values and removed feed `drift --values`; they are not part of the structured output.
 	values  map[string]any
 	removed []string
@@ -43,7 +45,9 @@ func newDriftCommand(o *Options) *cobra.Command {
 Server metadata, status and live-only fields (defaults and controller additions)
 are ignored. Lists are compared in order. Hooks are excluded.
 Each drifted object is followed by a unified diff of the declared (expected) and
-live fields. Secret data values are masked unless --show-secrets is set; they
+live fields. A drifted field that Kubernetes does not allow changing in place
+is listed after the table, with the kubectl command that applies the release
+value. Secret data values are masked unless --show-secrets is set; they
 are then shown base64-encoded as stored (stringData is folded into data).
 With --values the table is replaced by a values-like YAML document of the live
 values at the drifted paths, one per drifted object. It is not mapped to chart
@@ -139,6 +143,7 @@ func runDrift(cmd *cobra.Command, o *Options, c *Clients, name string) (*driftRe
 			row.Status = "in-sync"
 			if len(row.Changes) > 0 {
 				row.Status = "drifted"
+				row.Immutable = kube.ImmutableChanges(row.APIVersion, row.Kind, row.Namespace, row.Name, row.Changes)
 				driftDetails(o, &row, obj.Object, live.Object.Object)
 			}
 		}
@@ -155,6 +160,13 @@ func printDrift(o *Options, w io.Writer, result *driftResult) {
 		t.add(row.Kind, row.Namespace, o.paint(row.Name, name), o.paint(row.Status, statusColor(row.Status)), strings.Join(row.Changes, ", "))
 	}
 	t.flush()
+	var immutable []immutableEntry
+	for _, row := range result.Resources {
+		if row.Immutable != nil {
+			immutable = append(immutable, immutableEntry{row.APIVersion, row.Kind, row.Namespace, row.Name, row.Immutable})
+		}
+	}
+	printImmutable(w, "Immutable fields (the live value differs from the release and Kubernetes does not allow changing it in place):", immutable)
 	for _, row := range result.Resources {
 		if row.Diff == "" {
 			continue
