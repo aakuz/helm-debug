@@ -18,7 +18,8 @@ const (
 	refCRB         = "https://kubernetes.io/docs/reference/kubernetes-api/authorization-resources/cluster-role-binding-v1/"
 
 	noteDefault     = "the next upgrade or rollback recreates it"
-	noteStatefulSet = "keeps the Pods and PersistentVolumeClaims; the next upgrade or rollback recreates the StatefulSet and it adopts them"
+	noteWorkload    = "also deletes its Pods, so the workload is down until the next upgrade or rollback recreates it"
+	noteStatefulSet = "keeps the Pods and PersistentVolumeClaims; the recreated StatefulSet adopts the Pods only if its selector still matches them, and existing claims keep their old spec"
 	notePVC         = "also deletes the volume and its data when the reclaim policy is Delete: back up first; the next upgrade or rollback recreates the claim"
 )
 
@@ -45,10 +46,12 @@ func TestImmutableChangesFields(t *testing.T) {
 			[]string{"/spec/serviceName", "/spec/volumeClaimTemplates"}, refStatefulSet},
 		{"job template nested", "batch/v1", "Job", []string{"/spec/template/spec/containers/0/image"}, []string{"/spec/template"}, refJob},
 		{"job completion mode", "batch/v1", "Job", []string{"/spec/template/metadata/labels/a", "/spec/completionMode", "/spec/backoffLimit"}, []string{"/spec/completionMode", "/spec/template"}, refJob},
+		{"job podFailurePolicy", "batch/v1", "Job", []string{"/spec/template/spec/restartPolicy", "/spec/podFailurePolicy/rules/0/action", "/spec/completionMode"}, []string{"/spec/completionMode", "/spec/podFailurePolicy", "/spec/template"}, refJob},
 		{"service clusterIP", "v1", "Service", []string{"/spec/clusterIP"}, []string{"/spec/clusterIP"}, refService},
 		{"service clusterIPs", "v1", "Service", []string{"/spec/clusterIPs/0", "/spec/clusterIP"}, []string{"/spec/clusterIP", "/spec/clusterIPs"}, refService},
 		{"pvc several", "v1", "PersistentVolumeClaim", []string{"/spec/volumeName", "/spec/storageClassName", "/spec/accessModes/0"}, []string{"/spec/accessModes", "/spec/storageClassName", "/spec/volumeName"}, refPVC},
 		{"pvc dataSource volumeMode selector", "v1", "PersistentVolumeClaim", []string{"/spec/volumeMode", "/spec/selector/matchLabels/a", "/spec/dataSource/name"}, []string{"/spec/dataSource", "/spec/selector", "/spec/volumeMode"}, refPVC},
+		{"pvc dataSourceRef", "v1", "PersistentVolumeClaim", []string{"/spec/volumeName", "/spec/dataSourceRef/name", "/spec/dataSource/kind"}, []string{"/spec/dataSource", "/spec/dataSourceRef", "/spec/volumeName"}, refPVC},
 		{"storageclass", "storage.k8s.io/v1", "StorageClass", []string{"/volumeBindingMode", "/parameters/type", "/reclaimPolicy", "/provisioner"}, []string{"/parameters", "/provisioner", "/reclaimPolicy", "/volumeBindingMode"}, refStorageCls},
 		{"rolebinding roleRef", "rbac.authorization.k8s.io/v1", "RoleBinding", []string{"/roleRef/name"}, []string{"/roleRef"}, refRoleBinding},
 		{"clusterrolebinding roleRef", "rbac.authorization.k8s.io/v1", "ClusterRoleBinding", []string{"/subjects/0/name", "/roleRef"}, []string{"/roleRef"}, refCRB},
@@ -118,13 +121,19 @@ func TestImmutableChangesCommandAndNote(t *testing.T) {
 		{"pvc", "v1", "PersistentVolumeClaim", "prod", "data", []string{"/spec/storageClassName"},
 			"kubectl -n prod delete persistentvolumeclaim/data", notePVC, refPVC},
 		{"namespaced default", "apps/v1", "Deployment", "prod", "api", []string{"/spec/selector/matchLabels/app"},
-			"kubectl -n prod delete deployment/api", noteDefault, refDeployment},
+			"kubectl -n prod delete deployment/api", noteWorkload, refDeployment},
 		{"job default", "batch/v1", "Job", "prod", "migrate", []string{"/spec/template/spec/containers/0/image"},
-			"kubectl -n prod delete job/migrate", noteDefault, refJob},
+			"kubectl -n prod delete job/migrate", noteWorkload, refJob},
+		{"replicaset workload", "apps/v1", "ReplicaSet", "prod", "api-1", []string{"/spec/selector"},
+			"kubectl -n prod delete replicaset/api-1", noteWorkload, refReplicaSet},
+		{"daemonset workload", "apps/v1", "DaemonSet", "prod", "agent", []string{"/spec/selector"},
+			"kubectl -n prod delete daemonset/agent", noteWorkload, refDaemonSet},
+		{"service default", "v1", "Service", "prod", "db", []string{"/spec/clusterIP"},
+			"kubectl -n prod delete service/db", noteDefault, refService},
 		{"rolebinding default", "rbac.authorization.k8s.io/v1", "RoleBinding", "prod", "reader", []string{"/roleRef"},
 			"kubectl -n prod delete rolebinding/reader", noteDefault, refRoleBinding},
 		{"namespaced empty namespace", "apps/v1", "Deployment", "", "api", []string{"/spec/selector"},
-			"kubectl delete deployment/api", noteDefault, refDeployment},
+			"kubectl delete deployment/api", noteWorkload, refDeployment},
 		{"cluster-scoped ignores namespace", "storage.k8s.io/v1", "StorageClass", "prod", "fast", []string{"/provisioner"},
 			"kubectl delete storageclass/fast", noteDefault, refStorageCls},
 		{"cluster-scoped binding ignores namespace", "rbac.authorization.k8s.io/v1", "ClusterRoleBinding", "prod", "admins", []string{"/roleRef/name"},

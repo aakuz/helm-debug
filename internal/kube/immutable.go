@@ -24,25 +24,26 @@ type groupKind struct{ group, kind string }
 
 const (
 	immNoteRecreate    = "the next upgrade or rollback recreates it"
-	immNoteStatefulSet = "keeps the Pods and PersistentVolumeClaims; the next upgrade or rollback recreates the StatefulSet and it adopts them"
+	immNoteWorkload    = "also deletes its Pods, so the workload is down until the next upgrade or rollback recreates it"
+	immNoteStatefulSet = "keeps the Pods and PersistentVolumeClaims; the recreated StatefulSet adopts the Pods only if its selector still matches them, and existing claims keep their old spec"
 	immNotePVC         = "also deletes the volume and its data when the reclaim policy is Delete: back up first; the next upgrade or rollback recreates the claim"
 )
 
 // immutableKinds is keyed by API group and kind, not version: the rules do not change between versions.
 var immutableKinds = map[groupKind]immutableKind{
-	{"apps", "Deployment"}: {paths: []string{"/spec/selector"}, note: immNoteRecreate,
+	{"apps", "Deployment"}: {paths: []string{"/spec/selector"}, note: immNoteWorkload,
 		reference: "https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/deployment-v1/#DeploymentSpec"},
-	{"apps", "ReplicaSet"}: {paths: []string{"/spec/selector"}, note: immNoteRecreate,
+	{"apps", "ReplicaSet"}: {paths: []string{"/spec/selector"}, note: immNoteWorkload,
 		reference: "https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/replica-set-v1/#ReplicaSetSpec"},
-	{"apps", "DaemonSet"}: {paths: []string{"/spec/selector"}, note: immNoteRecreate,
+	{"apps", "DaemonSet"}: {paths: []string{"/spec/selector"}, note: immNoteWorkload,
 		reference: "https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/daemon-set-v1/#DaemonSetSpec"},
 	{"apps", "StatefulSet"}: {paths: []string{"/spec/podManagementPolicy", "/spec/selector", "/spec/serviceName", "/spec/volumeClaimTemplates"}, note: immNoteStatefulSet,
 		reference: "https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/stateful-set-v1/#StatefulSetSpec"},
-	{"batch", "Job"}: {paths: []string{"/spec/completionMode", "/spec/selector", "/spec/template"}, note: immNoteRecreate,
+	{"batch", "Job"}: {paths: []string{"/spec/completionMode", "/spec/podFailurePolicy", "/spec/selector", "/spec/template"}, note: immNoteWorkload,
 		reference: "https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/job-v1/#JobSpec"},
 	{"", "Service"}: {paths: []string{"/spec/clusterIP", "/spec/clusterIPs"}, note: immNoteRecreate,
 		reference: "https://kubernetes.io/docs/reference/kubernetes-api/service-resources/service-v1/#ServiceSpec"},
-	{"", "PersistentVolumeClaim"}: {paths: []string{"/spec/accessModes", "/spec/dataSource", "/spec/selector", "/spec/storageClassName", "/spec/volumeMode", "/spec/volumeName"}, note: immNotePVC,
+	{"", "PersistentVolumeClaim"}: {paths: []string{"/spec/accessModes", "/spec/dataSource", "/spec/dataSourceRef", "/spec/selector", "/spec/storageClassName", "/spec/volumeMode", "/spec/volumeName"}, note: immNotePVC,
 		reference: "https://kubernetes.io/docs/reference/kubernetes-api/config-and-storage-resources/persistent-volume-claim-v1/#PersistentVolumeClaimSpec"},
 	{"storage.k8s.io", "StorageClass"}: {paths: []string{"/parameters", "/provisioner", "/reclaimPolicy", "/volumeBindingMode"}, clusterWide: true, note: immNoteRecreate,
 		reference: "https://kubernetes.io/docs/reference/kubernetes-api/config-and-storage-resources/storage-class-v1/"},

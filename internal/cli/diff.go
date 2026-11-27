@@ -182,10 +182,10 @@ func diffManifests(oldManifest, newManifest, releaseNamespace string, showSecret
 	for _, k := range sorted {
 		oldObj, hadOld := oldObjects[k]
 		newObj, hadNew := newObjects[k]
-		// Paths come from the unmasked objects: masking rewrites values, not structure, but must not decide this.
+		// The paths are taken before maskSecret rewrites Secret values.
 		var imm *kube.ImmutableChange
 		if hadOld && hadNew {
-			paths := sortedUnion(kube.ChangedPaths(oldObj, newObj), kube.ChangedPaths(newObj, oldObj))
+			paths := append(kube.ChangedPaths(oldObj, newObj), kube.ChangedPaths(newObj, oldObj)...)
 			ns := k.namespace
 			if ns == "" {
 				ns = releaseNamespace
@@ -228,19 +228,6 @@ func diffManifests(oldManifest, newManifest, releaseNamespace string, showSecret
 		rows = append(rows, row)
 	}
 	return rows, nil
-}
-
-func sortedUnion(a, b []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, p := range append(append([]string{}, a...), b...) {
-		if !seen[p] {
-			seen[p] = true
-			out = append(out, p)
-		}
-	}
-	sort.Strings(out)
-	return out
 }
 
 // maskSecret replaces every data/stringData value in both objects (either may
@@ -475,7 +462,6 @@ func orDefault(s, def string) string {
 	return s
 }
 
-// printImmutable prints the block that explains the immutable changes of the table rows, in row order.
 func printImmutable(w io.Writer, header string, entries []immutableEntry) {
 	if len(entries) == 0 {
 		return
@@ -487,8 +473,6 @@ func printImmutable(w io.Writer, header string, entries []immutableEntry) {
 			ref = e.kind + " " + ns + "/" + e.name
 		}
 		fmt.Fprintf(w, "  %s: %s\n    reference: %s\n    to apply it (not run): %s\n", ref, strings.Join(e.change.Fields, ", "), e.change.Reference, e.change.Command)
-		if e.change.Note != "" {
-			fmt.Fprintf(w, "      %s\n", e.change.Note)
-		}
+		fmt.Fprintf(w, "      %s\n", e.change.Note)
 	}
 }

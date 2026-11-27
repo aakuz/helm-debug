@@ -328,8 +328,8 @@ and a `kubectl` command that would recreate the object (with `--cascade=orphan` 
 keeps the Pods and claims). The command is printed, never run. So `diff RELEASE CURRENT TARGET` shows
 whether a rollback will fail with `field is immutable`. Covered fields: Deployment, ReplicaSet and
 DaemonSet `selector`; StatefulSet `podManagementPolicy`, `selector`, `serviceName`, `volumeClaimTemplates`;
-Job `completionMode`, `selector`, `template`; Service `clusterIP`, `clusterIPs`; PersistentVolumeClaim
-`accessModes`, `dataSource`, `selector`, `storageClassName`, `volumeMode`, `volumeName`; StorageClass
+Job `completionMode`, `podFailurePolicy`, `selector`, `template`; Service `clusterIP`, `clusterIPs`; PersistentVolumeClaim
+`accessModes`, `dataSource`, `dataSourceRef`, `selector`, `storageClassName`, `volumeMode`, `volumeName`; StorageClass
 `parameters`, `provisioner`, `reclaimPolicy`, `volumeBindingMode`; RoleBinding and ClusterRoleBinding `roleRef`.
 
 ```console
@@ -344,7 +344,7 @@ Immutable fields (Kubernetes rejects the change in place: "field is immutable"):
   Job prod/migrate: /spec/template
     reference: https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/job-v1/#JobSpec
     to apply it (not run): kubectl -n prod delete job/migrate
-      the next upgrade or rollback recreates it
+      also deletes its Pods, so the workload is down until the next upgrade or rollback recreates it
   Service prod/db: /spec/clusterIP
     reference: https://kubernetes.io/docs/reference/kubernetes-api/service-resources/service-v1/#ServiceSpec
     to apply it (not run): kubectl -n prod delete service/db
@@ -352,7 +352,7 @@ Immutable fields (Kubernetes rejects the change in place: "field is immutable"):
   StatefulSet prod/db: /spec/serviceName, /spec/volumeClaimTemplates
     reference: https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/stateful-set-v1/#StatefulSetSpec
     to apply it (not run): kubectl -n prod delete statefulset/db --cascade=orphan
-      keeps the Pods and PersistentVolumeClaims; the next upgrade or rollback recreates the StatefulSet and it adopts them
+      keeps the Pods and PersistentVolumeClaims; the recreated StatefulSet adopts the Pods only if its selector still matches them, and existing claims keep their old spec
 ```
 
 Exit code is 0 whether or not the revisions differ; unknown revisions and other errors exit 1.

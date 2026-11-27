@@ -82,7 +82,7 @@ func TestDriftImmutableSelectorTable(t *testing.T) {
 		"  Deployment prod/api: /spec/selector\n",
 		"    reference: https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/deployment-v1/#DeploymentSpec\n",
 		"    to apply it (not run): kubectl -n prod delete deployment/api\n",
-		"      the next upgrade or rollback recreates it\n",
+		"      also deletes its Pods, so the workload is down until the next upgrade or rollback recreates it\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q:\n%s", want, out)
