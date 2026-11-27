@@ -116,11 +116,11 @@ check `stuck` (it suggests a rollback to the last good revision) and back up the
 | 92 | Debugging `UPGRADE FAILED`? | ✅ `history`, `diff`, `resources`, `health` |
 | 93 | Last successful upgrade? | ✅ `history` |
 | 94–96 | Compare two revisions, manifest of the previous one, values N vs N-1? | ✅ `diff REL A B`, `manifests REL --revision N`, `values REL --revision N` |
-| 97 | Rollback or fix forward? | 🟡 `diff REL CURRENT TARGET` shows what a rollback would revert; immutable fields: #50 |
+| 97 | Rollback or fix forward? | ✅ `diff REL CURRENT TARGET` shows what a rollback would revert and which changes are `immutable` |
 | 98–99 | What happens to a failed revision; why a failed one between good ones? | ✅ `history` |
 | 100–101 | Can a failed revision change part of the objects; which ones? | 🟡 `drift REL` compares the latest (failed) manifest with live objects; per-object apply state is not recorded by Helm |
-| 102–104 | StatefulSet risk, immutable-field errors, changes that need a recreate? | 🔧 #50 |
-| 105–110 | `--force`/replacement, Service ClusterIP, PVC, PDB on recreate? | ➖ Kubernetes behavior; #50 prints the recreate step for immutable fields |
+| 102–104 | StatefulSet risk, immutable-field errors, changes that need a recreate? | ✅ `diff REL N-1 N` (`immutable` status, the StatefulSet `--cascade=orphan` command) |
+| 105–110 | `--force`/replacement, Service ClusterIP, PVC, PDB on recreate? | ➖ Kubernetes behavior; `diff` prints the recreate step for immutable fields |
 | 111–114 | Upgrade broken after a Kubernetes upgrade; removed APIs in stored manifests? | ✅ `deprecated REL --target-version X.Y`; fix: `helm-mapkubeapis` |
 
 ## 5. pending-upgrade and "another operation is in progress"
@@ -143,8 +143,8 @@ check `stuck` (it suggests a rollback to the last good revision) and back up the
 | # | Question | Answer with helm-debug |
 |---|---|---|
 | 137–139 | How rollback works, what it restores, whether it creates a revision? | ➖ it re-applies the stored manifest and values of revision N as a new revision; visible in `history` |
-| 140 | Why can a rollback fail? | 🟡 `history` (reason); immutable fields: #50; removed APIs: `deprecated --revision N` |
-| 141 | Blocked by an immutable field? | 🔧 #50 |
+| 140 | Why can a rollback fail? | 🟡 `history` (reason); immutable fields: `diff REL CURRENT TARGET`; removed APIs: `deprecated --revision N` |
+| 141 | Blocked by an immutable field? | ✅ `diff REL CURRENT TARGET` (`immutable` status for the rollback target) |
 | 142–143 | Rollback after a Kubernetes upgrade; old manifest with a removed API? | ✅ `deprecated REL --revision N` |
 | 144 | Rollback brings back an old CRD? | ✅ `crds REL --revision N` (CRDs in `crds/` are not touched by rollback) |
 | 145 | Debugging `pending-rollback`? | ✅ `stuck`, `history` |
@@ -211,8 +211,8 @@ check `stuck` (it suggests a rollback to the last good revision) and back up the
 
 | # | Question | Answer with helm-debug |
 |---|---|---|
-| 257–263 | `field is immutable`; which fields; selector, serviceName, Service, PVC; finding it in a big upgrade? | 🔧 #50 |
-| 264–268 | When to recreate, when it is unsafe, automation, `--force`, replace vs patch? | ➖ Kubernetes/Helm behavior; #50 prints the recreate step |
+| 257–263 | `field is immutable`; which fields; selector, serviceName, Service, PVC; finding it in a big upgrade? | ✅ `diff` (`immutable` status and fields, Deployment/StatefulSet/Job/Service/PVC/StorageClass/RoleBinding), `drift` for live edits |
+| 264–268 | When to recreate, when it is unsafe, automation, `--force`, replace vs patch? | ➖ Kubernetes/Helm behavior; `diff` prints the recreate step |
 
 ## 13. Hooks
 
@@ -352,7 +352,7 @@ The permissions helm-debug itself needs are listed in [README → RBAC](../READM
 |---|---|---|
 | 469–472 | ConfigMap change without pod restart; checksum annotations; non-deterministic checksums? | 🟡 `diff REL A B` shows whether the checksum changed; pods not rolled out: #53 |
 | 473–475 | Secrets in `--dry-run --debug`; hiding secrets while debugging? | ✅ `drift`/`diff` mask Secret data unless `--show-secrets`; `values` warns that values may hold secrets |
-| 476–477 | Immutable Secrets? | 🔧 #50 |
+| 476–477 | Immutable Secrets? | 🔧 #95 |
 | 478 | Secret rotation and Deployments? | 🔧 #53 (pods older than the latest template change) |
 
 ## 27. Release storage
@@ -433,7 +433,7 @@ The permissions helm-debug itself needs are listed in [README → RBAC](../READM
 |---|---|---|
 | 568–569 | What a post-renderer is, when it runs? | ➖ Helm concept |
 | 570 | Why the manifest after a post-renderer differs from `helm template`? | ✅ `manifests REL` shows the stored, post-rendered manifest |
-| 571–575 | Debugging a post-renderer, exit 1, Kustomize, immutable fields, same post-renderer in CI? | 🟡 `diff REL A B` shows its effect between revisions; immutable fields: #50; the rest is ➖ |
+| 571–575 | Debugging a post-renderer, exit 1, Kustomize, immutable fields, same post-renderer in CI? | 🟡 `diff REL A B` shows its effect between revisions, including `immutable` changes; the rest is ➖ |
 
 ## 35. Security and policy
 
@@ -460,7 +460,7 @@ The permissions helm-debug itself needs are listed in [README → RBAC](../READM
 | 596 | `deployed` but pods CrashLoop: did Helm succeed? | ✅ `health REL --logs 50` (exit code 2) |
 | 597 | Upgrade timed out, a minute later the Deployment is Ready? | ✅ `history` shows `failed`; `health` shows it healthy now |
 | 598 | CI died during an upgrade: safe next step? | ✅ `stuck` (revision, age, fix), `diff REL N-1 N` |
-| 599 | Rollback returns an immutable-field error? | 🔧 #50 |
+| 599 | Rollback returns an immutable-field error? | ✅ `diff REL CURRENT TARGET` (`immutable` status, fields, recreate command) |
 | 600 | CRD stayed old after upgrade: how to prove it? | ✅ `crds REL` |
 | 601 | Uninstall hangs for 30 minutes: first checks? | 🟡 `stuck` (#54 for `uninstalling`), `hooks`, `resources` (`terminating` objects and their finalizers) |
 | 602 | pre-delete Job fails because a Secret is gone? | 🟡 `hooks REL`; logs: #47 |

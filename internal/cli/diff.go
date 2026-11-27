@@ -11,12 +11,15 @@ import (
 	"github.com/spf13/cobra"
 	releaseutil "helm.sh/helm/v4/pkg/release/v1/util"
 	"sigs.k8s.io/yaml"
+
+	"github.com/aakuz/helm-debug/internal/kube"
 )
 
 const (
 	diffAdded     = "added"
 	diffRemoved   = "removed"
 	diffChanged   = "changed"
+	diffImmutable = "immutable"
 	diffUnchanged = "unchanged"
 	diffContext   = 3
 )
@@ -28,6 +31,8 @@ type diffObject struct {
 	Name       string `json:"name"`
 	Status     string `json:"status"`
 	Diff       string `json:"diff"`
+
+	Immutable *kube.ImmutableChange `json:"immutable,omitempty"`
 }
 
 type diffValues struct {
@@ -50,7 +55,9 @@ func newDiffCommand(o *Options) *cobra.Command {
 		Short: "Compare manifests and user values between two revisions",
 		Long: `Compare the stored manifests and user-supplied values of two revisions.
 Objects are matched by apiVersion, kind, namespace and name and reported as
-added, removed or changed. Hooks are excluded. Secret data and stringData
+added, removed or changed; a change to a field Kubernetes does not allow
+changing in place is reported as immutable, with the kubectl command that
+applies it. Hooks are excluded. Secret data and stringData
 values are masked unless --show-secrets is set: a changed value is shown as
 <masked:old> and <masked:new>. User values are shown as stored. Exits with code 0 whether or not the
 revisions differ.`,
@@ -77,7 +84,7 @@ revisions differ.`,
 				return err
 			}
 			result := &diffResult{Release: b.Name, Namespace: b.Namespace, From: a.Version, To: b.Version}
-			if result.Manifest, err = diffManifests(a.Manifest, b.Manifest, o.ShowSecrets); err != nil {
+			if result.Manifest, err = diffManifests(a.Manifest, b.Manifest, b.Namespace, o.ShowSecrets); err != nil {
 				return err
 			}
 			oldValues, err := yaml.Marshal(a.Config)
@@ -138,7 +145,7 @@ func str(v any) string {
 	return s
 }
 
-func diffManifests(oldManifest, newManifest string, showSecrets bool) ([]diffObject, error) {
+func diffManifests(oldManifest, newManifest, releaseNamespace string, showSecrets bool) ([]diffObject, error) {
 	oldObjects, err := parseObjects(oldManifest)
 	if err != nil {
 		return nil, err
@@ -175,6 +182,16 @@ func diffManifests(oldManifest, newManifest string, showSecrets bool) ([]diffObj
 	for _, k := range sorted {
 		oldObj, hadOld := oldObjects[k]
 		newObj, hadNew := newObjects[k]
+		// The paths are taken before maskSecret rewrites Secret values.
+		var imm *kube.ImmutableChange
+		if hadOld && hadNew {
+			paths := append(kube.ChangedPaths(oldObj, newObj), kube.ChangedPaths(newObj, oldObj)...)
+			ns := k.namespace
+			if ns == "" {
+				ns = releaseNamespace
+			}
+			imm = kube.ImmutableChanges(k.apiVersion, k.kind, ns, k.name, paths)
+		}
 		if k.kind == "Secret" && !showSecrets {
 			maskSecret(oldObj, newObj)
 		}
@@ -201,6 +218,9 @@ func diffManifests(oldManifest, newManifest string, showSecrets bool) ([]diffObj
 			row.Status = diffRemoved
 		case oldText != newText:
 			row.Status = diffChanged
+			if imm != nil {
+				row.Status, row.Immutable = diffImmutable, imm
+			}
 		default:
 			continue
 		}
@@ -388,6 +408,13 @@ func printDiff(o *Options, w io.Writer, result *diffResult) {
 			t.add(row.Kind, row.Namespace, o.paint(row.Name, name), o.paint(row.Status, statusColor(row.Status)))
 		}
 		t.flush()
+		var immutable []immutableEntry
+		for _, row := range result.Manifest {
+			if row.Immutable != nil {
+				immutable = append(immutable, immutableEntry{row.APIVersion, row.Kind, orDefault(row.Namespace, result.Namespace), row.Name, row.Immutable})
+			}
+		}
+		printImmutable(w, `Immutable fields (Kubernetes rejects the change in place: "field is immutable"):`, immutable)
 		for _, row := range result.Manifest {
 			ns := ""
 			if row.Namespace != "" {
@@ -421,4 +448,31 @@ func (o *Options) paintDiff(text string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+type immutableEntry struct {
+	apiVersion, kind, namespace, name string
+	change                            *kube.ImmutableChange
+}
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
+}
+
+func printImmutable(w io.Writer, header string, entries []immutableEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "\n%s\n", header)
+	for _, e := range entries {
+		ref := e.kind + " " + e.name
+		if ns := kube.ImmutableNamespace(e.apiVersion, e.kind, e.namespace); ns != "" {
+			ref = e.kind + " " + ns + "/" + e.name
+		}
+		fmt.Fprintf(w, "  %s: %s\n    reference: %s\n    to apply it (not run): %s\n", ref, strings.Join(e.change.Fields, ", "), e.change.Reference, e.change.Command)
+		fmt.Fprintf(w, "      %s\n", e.change.Note)
+	}
 }
